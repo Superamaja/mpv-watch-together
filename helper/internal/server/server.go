@@ -22,10 +22,21 @@ import (
 const (
 	guestStaleAfter      = 20 * time.Second
 	guestPruneAfter      = 2 * time.Minute
-	stuckBufferingAfter  = 8 * time.Second
 	serverClockPollEvery = 30 * time.Second
 	coordinatorTickEvery = 2 * time.Second
 	hostPresenceGrace    = 20 * time.Second
+
+	eventAutoForceSync  = "auto_force_sync"
+	eventConfigChanged  = "config_changed"
+	eventForceSync      = "force_sync"
+	eventGuestBuffering = "guest_buffering"
+	eventGuestLeft      = "guest_left"
+	eventGuestPruned    = "guest_pruned"
+	eventGuestSynced    = "guest_synced"
+	eventHostLeft       = "host_left"
+	eventHostSynced     = "host_synced"
+
+	forceSyncReasonAutoSeek = "auto_seek"
 )
 
 type App struct {
@@ -42,7 +53,6 @@ type App struct {
 	clockWarningSent    bool
 	subscribers         map[chan []byte]struct{}
 	guestBufferingSince map[string]int64
-	stuckBufferingSent  map[string]bool
 }
 
 type apiError struct {
@@ -62,7 +72,6 @@ func New(cfg config.Config) (*App, error) {
 		appCancel:           appCancel,
 		subscribers:         make(map[chan []byte]struct{}),
 		guestBufferingSince: make(map[string]int64),
-		stuckBufferingSent:  make(map[string]bool),
 	}
 	go app.monitorServerClock()
 	go app.runCoordinator()
@@ -143,9 +152,9 @@ func (a *App) isFreshParticipant(participant *protocol.ParticipantState, now int
 	return participant != nil && participant.LastSeen > 0 && now-participant.LastSeen <= maxAge.Milliseconds()
 }
 
-func (a *App) publishRoomEvent(ctx context.Context, roomID string, eventType string, message string, userID string, level string) {
+func (a *App) publishRoomEvent(ctx context.Context, roomID string, eventType string, message string, userID string, level string) *protocol.RoomEvent {
 	if roomID == "" {
-		return
+		return nil
 	}
 	now := a.serverNow()
 	event := protocol.RoomEvent{
@@ -161,13 +170,14 @@ func (a *App) publishRoomEvent(ctx context.Context, roomID string, eventType str
 	defer cancel()
 	if err := a.firebase.Patch(reqCtx, roomPath(roomID)+"/events", map[string]any{"latest": event}, nil); err != nil {
 		slog.Warn("failed to publish room event", "room", roomID, "type", eventType, "error", err)
-		return
+		return nil
 	}
 
 	a.mu.Lock()
 	a.room.Events.Latest = &event
 	a.mu.Unlock()
 	a.publishState()
+	return &event
 }
 
 func (a *App) monitorServerClock() {
@@ -239,31 +249,20 @@ func (a *App) runCoordinatorTick() {
 		if guest.LastSeen > 0 && ageMs > guestPruneAfter.Milliseconds() {
 			pruneIDs = append(pruneIDs, guestID)
 			delete(a.guestBufferingSince, guestID)
-			delete(a.stuckBufferingSent, guestID)
 			continue
 		}
 
 		stale := guest.LastSeen <= 0 || ageMs > guestStaleAfter.Milliseconds()
 		if stale || !guest.IsBuffering {
 			delete(a.guestBufferingSince, guestID)
-			delete(a.stuckBufferingSent, guestID)
 			continue
 		}
 
 		if _, ok := a.guestBufferingSince[guestID]; !ok {
 			a.guestBufferingSince[guestID] = now
 			events = append(events, protocol.RoomEvent{
-				Type:    "guest_buffering",
-				Message: guest.DisplayName + " is buffering",
-				UserID:  guestID,
-				Level:   "warning",
-			})
-		}
-		if !a.stuckBufferingSent[guestID] && now-a.guestBufferingSince[guestID] >= stuckBufferingAfter.Milliseconds() {
-			a.stuckBufferingSent[guestID] = true
-			events = append(events, protocol.RoomEvent{
-				Type:    "guest_stuck_buffering",
-				Message: guest.DisplayName + " is still buffering",
+				Type:    eventGuestBuffering,
+				Message: guest.DisplayName + " is buffering; host paused",
 				UserID:  guestID,
 				Level:   "warning",
 			})
@@ -279,7 +278,7 @@ func (a *App) runCoordinatorTick() {
 			slog.Warn("failed to prune stale guest", "room", cfg.RoomID, "user", guestID, "error", err)
 			continue
 		}
-		a.publishRoomEvent(a.appCtx, cfg.RoomID, "guest_pruned", "Removed offline guest", guestID, "info")
+		a.publishRoomEvent(a.appCtx, cfg.RoomID, eventGuestPruned, "Removed offline guest", guestID, "info")
 	}
 
 	for _, event := range events {
@@ -323,7 +322,7 @@ func (a *App) handlePostConfig(w http.ResponseWriter, r *http.Request) {
 	}
 
 	a.mu.Lock()
-	previousRoomID := a.cfg.RoomID
+	previousCfg := a.cfg
 	a.cfg.Role = req.Role
 	a.cfg.RoomID = strings.TrimSpace(req.RoomID)
 	if strings.TrimSpace(req.DisplayName) != "" {
@@ -336,14 +335,45 @@ func (a *App) handlePostConfig(w http.ResponseWriter, r *http.Request) {
 	a.lastLocal = lastLocal
 	a.mu.Unlock()
 
-	if previousRoomID != cfg.RoomID {
+	roomChanged := previousCfg.RoomID != cfg.RoomID
+	nameChanged := previousCfg.DisplayName != cfg.DisplayName
+	if enabled && roomChanged && previousCfg.RoomID != "" {
+		if previousCfg.Role == protocol.RoleHost {
+			a.removeHostParticipant(context.Background(), previousCfg, a.serverNow())
+		} else if previousCfg.Role == protocol.RoleGuest {
+			a.removeGuestParticipant(context.Background(), previousCfg)
+		}
+	}
+	if roomChanged {
 		a.startRoomStream()
 	}
+	var event *protocol.RoomEvent
 	if enabled {
 		go a.updateParticipantConfig(context.Background(), cfg, lastLocal)
+		if message := configChangedMessage(roomChanged, nameChanged, cfg); message != "" {
+			event = a.publishRoomEvent(context.Background(), cfg.RoomID, eventConfigChanged, message, cfg.UserID, "info")
+		}
 	}
-	writeJSON(w, http.StatusOK, map[string]bool{"ok": true})
+	response := map[string]any{"ok": true}
+	if event != nil {
+		response["eventId"] = event.EventID
+	}
+	writeJSON(w, http.StatusOK, response)
 	a.publishState()
+}
+
+func configChangedMessage(roomChanged bool, nameChanged bool, cfg config.Config) string {
+	changes := make([]string, 0, 2)
+	if roomChanged {
+		changes = append(changes, "room changed to "+cfg.RoomID)
+	}
+	if nameChanged {
+		changes = append(changes, "name changed to "+cfg.DisplayName)
+	}
+	if len(changes) == 0 {
+		return ""
+	}
+	return strings.Join(changes, "; ")
 }
 
 func (a *App) updateParticipantConfig(ctx context.Context, cfg config.Config, state protocol.ParticipantState) {
@@ -474,15 +504,15 @@ func (a *App) handlePostSync(w http.ResponseWriter, r *http.Request) {
 
 	if !*req.Enabled && cfg.Role == protocol.RoleGuest && cfg.RoomID != "" {
 		a.removeGuestParticipant(r.Context(), cfg)
-		a.publishRoomEvent(context.Background(), cfg.RoomID, "guest_left", cfg.DisplayName+" left", cfg.UserID, "info")
+		a.publishRoomEvent(context.Background(), cfg.RoomID, eventGuestLeft, cfg.DisplayName+" left", cfg.UserID, "info")
 	} else if !*req.Enabled && cfg.Role == protocol.RoleHost && cfg.RoomID != "" {
 		a.removeHostParticipant(r.Context(), cfg, now)
-		a.publishRoomEvent(context.Background(), cfg.RoomID, "host_left", cfg.DisplayName+" stopped hosting", cfg.UserID, "warning")
+		a.publishRoomEvent(context.Background(), cfg.RoomID, eventHostLeft, cfg.DisplayName+" stopped hosting", cfg.UserID, "warning")
 	} else if *req.Enabled {
 		if cfg.Role == protocol.RoleGuest {
-			a.publishRoomEvent(context.Background(), cfg.RoomID, "guest_synced", cfg.DisplayName+" synced", cfg.UserID, "success")
+			a.publishRoomEvent(context.Background(), cfg.RoomID, eventGuestSynced, cfg.DisplayName+" synced", cfg.UserID, "success")
 		} else if cfg.Role == protocol.RoleHost {
-			a.publishRoomEvent(context.Background(), cfg.RoomID, "host_synced", cfg.DisplayName+" started hosting", cfg.UserID, "success")
+			a.publishRoomEvent(context.Background(), cfg.RoomID, eventHostSynced, cfg.DisplayName+" started hosting", cfg.UserID, "success")
 		}
 	}
 
@@ -491,7 +521,7 @@ func (a *App) handlePostSync(w http.ResponseWriter, r *http.Request) {
 }
 
 func (a *App) handlePostForceSync(w http.ResponseWriter, r *http.Request) {
-	stateOverride, hasStateOverride, ok := decodeOptionalPlaybackState(w, r)
+	stateOverride, hasStateOverride, reason, ok := decodeForceSyncRequest(w, r)
 	if !ok {
 		return
 	}
@@ -525,6 +555,7 @@ func (a *App) handlePostForceSync(w http.ResponseWriter, r *http.Request) {
 		SyncID:      fmt.Sprintf("%s_%d_%06d", cfg.UserID, now, rand.Intn(1000000)),
 		IssuedAt:    now,
 		IssuedBy:    cfg.UserID,
+		Reason:      reason,
 		CurrentTime: sourceState.CurrentTime,
 		IsPlaying:   sourceState.IsPlaying,
 		IsBuffering: sourceState.IsBuffering,
@@ -561,36 +592,56 @@ func (a *App) handlePostForceSync(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	a.mu.RUnlock()
-	a.publishRoomEvent(context.Background(), cfg.RoomID, "force_sync", fmt.Sprintf("Force sync sent to %d guests", guestCount), cfg.UserID, "success")
-	writeJSON(w, http.StatusOK, force)
+	eventType := eventForceSync
+	message := fmt.Sprintf("Force sync sent to %d guests", guestCount)
+	if reason == forceSyncReasonAutoSeek {
+		eventType = eventAutoForceSync
+		message = fmt.Sprintf("Auto sync sent after seek to %d guests", guestCount)
+	}
+	event := a.publishRoomEvent(context.Background(), cfg.RoomID, eventType, message, cfg.UserID, "success")
+	response := map[string]any{
+		"forceSync":      force,
+		"recipientCount": guestCount,
+		"message":        message,
+	}
+	if event != nil {
+		response["eventId"] = event.EventID
+	}
+	writeJSON(w, http.StatusOK, response)
 }
 
-func decodeOptionalPlaybackState(w http.ResponseWriter, r *http.Request) (protocol.ParticipantState, bool, bool) {
+func decodeForceSyncRequest(w http.ResponseWriter, r *http.Request) (protocol.ParticipantState, bool, string, bool) {
 	defer r.Body.Close()
 
 	var raw map[string]json.RawMessage
 	if err := json.NewDecoder(r.Body).Decode(&raw); err != nil {
 		if err == io.EOF {
-			return protocol.ParticipantState{}, false, true
+			return protocol.ParticipantState{}, false, "", true
 		}
 		writeJSON(w, http.StatusBadRequest, apiError{Error: err.Error()})
-		return protocol.ParticipantState{}, false, false
+		return protocol.ParticipantState{}, false, "", false
+	}
+	reason := ""
+	if rawReason, ok := raw["reason"]; ok {
+		_ = json.Unmarshal(rawReason, &reason)
+		reason = strings.TrimSpace(reason)
+		delete(raw, "reason")
 	}
 	if _, ok := raw["currentTime"]; !ok {
-		return protocol.ParticipantState{}, false, true
+		return protocol.ParticipantState{}, false, reason, true
 	}
 
 	payload, err := json.Marshal(raw)
 	if err != nil {
 		writeJSON(w, http.StatusBadRequest, apiError{Error: err.Error()})
-		return protocol.ParticipantState{}, false, false
+		return protocol.ParticipantState{}, false, "", false
 	}
 	var state protocol.ParticipantState
 	if err := json.Unmarshal(payload, &state); err != nil {
 		writeJSON(w, http.StatusBadRequest, apiError{Error: err.Error()})
-		return protocol.ParticipantState{}, false, false
+		return protocol.ParticipantState{}, false, "", false
 	}
-	return state, true, true
+	return state, true, reason, true
 }
 
 func (a *App) handleDeleteGuest(w http.ResponseWriter, r *http.Request) {
@@ -618,7 +669,7 @@ func (a *App) handleDeleteGuest(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusBadGateway, apiError{Error: err.Error()})
 		return
 	}
-	a.publishRoomEvent(context.Background(), cfg.RoomID, "guest_pruned", "Removed offline guest", userID, "info")
+	a.publishRoomEvent(context.Background(), cfg.RoomID, eventGuestPruned, "Removed offline guest", userID, "info")
 	writeJSON(w, http.StatusOK, map[string]bool{"ok": true})
 }
 

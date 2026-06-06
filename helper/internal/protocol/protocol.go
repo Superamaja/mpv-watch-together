@@ -25,6 +25,7 @@ type ForceSync struct {
 	SyncID      string  `json:"syncId"`
 	IssuedAt    int64   `json:"issuedAt"`
 	IssuedBy    string  `json:"issuedBy"`
+	Reason      string  `json:"reason,omitempty"`
 	CurrentTime float64 `json:"currentTime"`
 	IsPlaying   bool    `json:"isPlaying"`
 	IsBuffering bool    `json:"isBuffering"`

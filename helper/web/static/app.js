@@ -20,6 +20,7 @@ let previousGuests = new Map();
 let hasGuestSnapshot = false;
 let stateReceivedAt = Date.now();
 let lastRoomEventId = null;
+let eventStreamConnected = null;
 
 async function api(path, options = {}) {
   const response = await fetch(path, {
@@ -65,7 +66,7 @@ function render(next) {
   const offlineCount = guests.length - onlineCount;
   const guestHeading = document.querySelector("#guestHeading");
   if (guestHeading) {
-    guestHeading.textContent = `Guests · ${onlineCount} online · ${offlineCount} offline`;
+    guestHeading.textContent = `Guests | ${onlineCount} online | ${offlineCount} offline`;
   }
   els.guestList.innerHTML = guests.length
     ? guests.map(([userId, guest]) => guestRow(userId, guest, state.room?.host)).join("")
@@ -87,7 +88,7 @@ function guestRow(userId, guest, host) {
     <div class="guest ${stale ? "is-stale" : ""}">
       <div>
         <strong>${escapeHTML(guest.displayName || guest.userId)}</strong>
-        <span>${escapeHTML(stateText)} · ${escapeHTML(formatSeconds(guest.currentTime))} · ${escapeHTML(formatAge(guest.lastSeen))}</span>
+        <span>${escapeHTML(stateText)} | ${escapeHTML(formatSeconds(guest.currentTime))} | ${escapeHTML(formatAge(guest.lastSeen))}</span>
       </div>
       <div class="guest-pills">
         <div class="pill ${stale ? "offline" : "online"}">${stale ? "offline" : "online"}</div>
@@ -156,9 +157,13 @@ function notifyGuestChanges(_previous, next) {
 function notifyRoomEvent(event) {
   if (!event?.eventId || event.eventId === lastRoomEventId) return;
   lastRoomEventId = event.eventId;
-  if (event.userId === state.userId) return;
   if (event.type === "guest_synced" || event.type === "guest_left") return;
+  if (event.userId === state.userId && !showsSelfEvent(event.type)) return;
   if (event.message) showToast(event.message);
+}
+
+function showsSelfEvent(type) {
+  return type === "force_sync" || type === "auto_force_sync" || type === "config_changed";
 }
 
 function showToast(message) {
@@ -240,8 +245,8 @@ els.toggleSync.addEventListener("click", async () => {
 
 els.forceSync.addEventListener("click", async () => {
   try {
-    await api("/api/host/force-sync", { method: "POST", body: "{}" });
-    setStatus("Force sync sent");
+    const result = await api("/api/host/force-sync", { method: "POST", body: "{}" });
+    setStatus(result.message || "Force sync sent");
   } catch (error) {
     setStatus(error.message, false);
   }
@@ -263,8 +268,16 @@ els.guestList.addEventListener("click", async (event) => {
 async function boot() {
   render(await api("/api/config"));
   const events = new EventSource("/api/events");
-  events.addEventListener("open", () => setStatus("Connected"));
-  events.addEventListener("error", () => setStatus("Reconnecting", false));
+  events.addEventListener("open", () => {
+    if (eventStreamConnected === false) showToast("Reconnected");
+    eventStreamConnected = true;
+    setStatus("Connected");
+  });
+  events.addEventListener("error", () => {
+    if (eventStreamConnected !== false) showToast("Connection lost, reconnecting");
+    eventStreamConnected = false;
+    setStatus("Reconnecting", false);
+  });
   events.addEventListener("state", (event) => {
     setStatus("Connected");
     render(JSON.parse(event.data));

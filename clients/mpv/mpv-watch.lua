@@ -39,6 +39,19 @@ local poll_commands = nil
 local set_sync = nil
 local send_state = nil
 
+local function should_show_event(event, user_id)
+    if not event or not event.message then
+        return false
+    end
+    if event.type == "force_sync" or event.type == "auto_force_sync" then
+        return opts.role == "host"
+    end
+    if event.type == "config_changed" then
+        return true
+    end
+    return event.userId ~= nil and event.userId ~= "" and event.userId ~= user_id
+end
+
 local function trim(value)
     if type(value) ~= "string" then
         return ""
@@ -97,7 +110,7 @@ local function request(method, path, body)
 end
 
 local function post_config()
-    local _, err = request("POST", "/api/config", {
+    local result, err = request("POST", "/api/config", {
         role = opts.role,
         roomId = opts.room,
         displayName = opts.display_name,
@@ -105,6 +118,9 @@ local function post_config()
     if err then
         msg.warn("Failed to save helper config: " .. err)
         return false
+    end
+    if result and result.eventId then
+        last_event_id = result.eventId
     end
     msg.debug("Saved helper config: room=" .. opts.room .. " displayName=" .. opts.display_name)
     return true
@@ -253,7 +269,7 @@ poll_commands = function()
     end
     if data.latestEvent and data.latestEvent.eventId and data.latestEvent.eventId ~= last_event_id then
         last_event_id = data.latestEvent.eventId
-        if data.latestEvent.userId ~= data.userId and data.latestEvent.message then
+        if should_show_event(data.latestEvent, data.userId) then
             mp.osd_message("Watch Together: " .. data.latestEvent.message)
         end
         if opts.role == "host" and data.latestEvent.type == "guest_buffering" then
@@ -271,7 +287,11 @@ poll_commands = function()
     if data.forceSync and data.forceSync.syncId and data.forceSync.syncId ~= last_force_sync_id then
         last_force_sync_id = data.forceSync.syncId
         apply_remote_state(data.forceSync, true)
-        mp.osd_message("Watch Together: force synced")
+        if data.forceSync.reason == "auto_seek" then
+            mp.osd_message("Watch Together: synced to host seek")
+        else
+            mp.osd_message("Watch Together: force synced")
+        end
         return
     end
     if data.host then
@@ -289,19 +309,29 @@ poll_commands = function()
     end
 end
 
-local function force_sync(current_time)
+local function force_sync(current_time, reason)
     local state = playback_state()
     if type(current_time) == "number" then
         state.currentTime = current_time
     end
+    if type(reason) == "string" and reason ~= "" then
+        state.reason = reason
+    end
 
-    local _, err = request("POST", "/api/host/force-sync", state)
+    local result, err = request("POST", "/api/host/force-sync", state)
     if err then
         mp.osd_message("Watch Together: force sync failed")
         msg.warn("Force sync failed: " .. err)
         return
     end
-    mp.osd_message("Watch Together: force sync sent")
+    if result and result.message then
+        if result.eventId then
+            last_event_id = result.eventId
+        end
+        mp.osd_message("Watch Together: " .. result.message)
+    else
+        mp.osd_message("Watch Together: force sync sent")
+    end
 end
 
 local function prompt_text(prompt, default, callback)
@@ -410,7 +440,7 @@ mp.observe_property("time-pos", "number", function(_, current_time)
         local cooldown = tonumber(opts.host_seek_cooldown) or 1.5
         if drift >= threshold and now - last_auto_force_sync_at >= cooldown then
             last_auto_force_sync_at = now
-            force_sync(current_time)
+            force_sync(current_time, "auto_seek")
         end
     elseif opts.role == "guest" and sync_enabled and opts.seek_lock == "yes" and last_host_state then
         local expected_host_time = projected_time(last_host_state)

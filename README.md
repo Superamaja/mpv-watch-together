@@ -214,7 +214,7 @@ archive/stremio-userscript         old Stremio userscript project
 - Host mpv auto-pauses when a synced guest starts buffering.
 - Firebase server-time calibration for timestamping, projection, and drift display.
 - Host dashboard guest list with online/offline state, buffering, drift, last sync time, and last-seen age.
-- Toast/OSD notifications for join, leave, force sync, connection loss/restored, guest buffering, and stale guest removal.
+- Toast/OSD notifications for join, leave, guest buffering host-pause, force sync counts, host seek auto-sync, guest seek sync, connection loss/restored, room/name changes, and stale guest removal.
 - Synced participant cleanup: guests are deleted on unsync, normal helper shutdown, host-loss auto-unsync, and host-side stale pruning.
 - Host removal for stale/offline guests from the dashboard.
 - Guest helpers intentionally do not serve the browser dashboard.
