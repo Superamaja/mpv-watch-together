@@ -14,8 +14,14 @@ import (
 	"mpv-watch-together/helper/internal/server"
 )
 
+// builtinFirebaseURL is set at link time by the release build tool via
+// -ldflags "-X main.builtinFirebaseURL=<url>". It acts as the default when
+// FIREBASE_DATABASE_URL is not set in the environment, so distributed bundles
+// need no .env file.
+var builtinFirebaseURL string
+
 func main() {
-	cfg, err := config.Load(os.Args[1:])
+	cfg, err := config.Load(os.Args[1:], builtinFirebaseURL)
 	if err != nil {
 		log.Fatal(err)
 	}

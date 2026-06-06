@@ -17,8 +17,13 @@ type Config struct {
 	FirebaseDatabaseURL string
 }
 
-func Load(args []string) (Config, error) {
+func Load(args []string, builtinFirebaseURL string) (Config, error) {
 	_ = loadDotEnv(".env")
+
+	fbURL := os.Getenv("FIREBASE_DATABASE_URL")
+	if fbURL == "" {
+		fbURL = builtinFirebaseURL
+	}
 
 	cfg := Config{
 		Addr:                envOrDefault("MPV_WATCH_ADDR", "127.0.0.1:8765"),
@@ -26,7 +31,7 @@ func Load(args []string) (Config, error) {
 		RoomID:              os.Getenv("MPV_WATCH_ROOM"),
 		DisplayName:         envOrDefault("MPV_WATCH_DISPLAY_NAME", "mpv watcher"),
 		UserID:              envOrDefault("MPV_WATCH_USER_ID", randomishID()),
-		FirebaseDatabaseURL: os.Getenv("FIREBASE_DATABASE_URL"),
+		FirebaseDatabaseURL: fbURL,
 	}
 
 	fs := flag.NewFlagSet("mpv-watch-helper", flag.ContinueOnError)

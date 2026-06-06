@@ -2,6 +2,7 @@ package main
 
 import (
 	"archive/zip"
+	"bufio"
 	"errors"
 	"flag"
 	"fmt"
@@ -25,6 +26,7 @@ func main() {
 	var guestName string
 	var outDir string
 	var zipBundles bool
+	var firebaseURL string
 
 	flag.StringVar(&targetList, "targets", defaultTargets(), "comma-separated GOOS-GOARCH targets")
 	flag.StringVar(&room, "room", "room123", "default room written to mpv-watch.conf")
@@ -32,6 +34,7 @@ func main() {
 	flag.StringVar(&guestName, "guest-name", "Guest", "default guest display name")
 	flag.StringVar(&outDir, "out", "dist", "release output directory")
 	flag.BoolVar(&zipBundles, "zip", true, "also write zip files under dist/packages")
+	flag.StringVar(&firebaseURL, "firebase-url", dotEnvValue(".env", "FIREBASE_DATABASE_URL"), "Firebase Database URL to bake into the binary")
 	flag.Parse()
 
 	targets, err := parseTargets(targetList)
@@ -54,8 +57,12 @@ func main() {
 		}
 	}
 
+	if firebaseURL == "" {
+		fmt.Fprintln(os.Stderr, "warning: FIREBASE_DATABASE_URL not set in .env and -firebase-url not provided; binary will require the env var at runtime")
+	}
+
 	for _, target := range targets {
-		binaryPath, err := buildHelper(outDir, target)
+		binaryPath, err := buildHelper(outDir, target, firebaseURL)
 		if err != nil {
 			fatal(err)
 		}
@@ -79,7 +86,7 @@ func main() {
 	fmt.Printf("Release bundles written to %s\n", outDir)
 }
 
-func buildHelper(outDir string, target target) (string, error) {
+func buildHelper(outDir string, target target, firebaseURL string) (string, error) {
 	buildDir := filepath.Join(".gocache", "release-build", target.OS+"-"+target.Arch)
 	if err := os.MkdirAll(buildDir, 0o755); err != nil {
 		return "", err
@@ -91,7 +98,8 @@ func buildHelper(outDir string, target target) (string, error) {
 	}
 	binaryPath := filepath.Join(buildDir, binaryName)
 
-	cmd := exec.Command("go", "build", "-trimpath", "-o", binaryPath, "./helper/cmd/mpv-watch-helper")
+	ldflags := fmt.Sprintf("-X 'main.builtinFirebaseURL=%s'", firebaseURL)
+	cmd := exec.Command("go", "build", "-trimpath", "-ldflags", ldflags, "-o", binaryPath, "./helper/cmd/mpv-watch-helper")
 	cmd.Env = append(os.Environ(), "GOOS="+target.OS, "GOARCH="+target.Arch)
 	if os.Getenv("GOCACHE") == "" {
 		cmd.Env = append(cmd.Env, "GOCACHE="+filepath.Join(mustGetwd(), ".gocache"))
@@ -128,9 +136,6 @@ func writeBundle(outDir string, target target, role string, displayName string, 
 		return "", err
 	}
 	if err := os.WriteFile(filepath.Join(optsDir, "mpv-watch.conf"), []byte(configFile(role, room, displayName)), 0o644); err != nil {
-		return "", err
-	}
-	if err := os.WriteFile(filepath.Join(bundleDir, ".env.example"), []byte(envExample()), 0o644); err != nil {
 		return "", err
 	}
 	if err := os.WriteFile(filepath.Join(bundleDir, "QUICKSTART.md"), []byte(quickstart(role, target, binaryName)), 0o644); err != nil {
@@ -258,12 +263,6 @@ host_seek_cooldown=1.5
 `, role, room, displayName)
 }
 
-func envExample() string {
-	return `FIREBASE_DATABASE_URL=https://your-project-default-rtdb.firebaseio.com
-FIREBASE_AUTH_TOKEN=
-`
-}
-
 func quickstart(role string, target target, binaryName string) string {
 	runCommand := "./helper/" + binaryName
 	if target.OS == "windows" {
@@ -291,18 +290,16 @@ Guests do not use a browser dashboard. Keep the helper running and use mpv's Ctr
 - mpv/scripts/mpv-watch.lua
 - mpv/script-opts/mpv-watch.conf
 - helper/%s
-- .env.example
 
 ## Install
 
 1. Copy mpv/scripts/mpv-watch.lua into your mpv scripts folder.
 2. Copy mpv/script-opts/mpv-watch.conf into your mpv script-opts folder.
-3. Copy .env.example to .env in this bundle folder and set FIREBASE_DATABASE_URL.
-4. From this bundle folder, start the helper:
+3. From this bundle folder, start the helper:
 
 %s
 
-5. Open mpv and press Ctrl+w for the Watch Together menu.
+4. Open mpv and press Ctrl+w for the Watch Together menu.
 
 %s
 `, title(role), binaryName, runCommand, dashboard)
@@ -344,6 +341,27 @@ func title(value string) string {
 		return ""
 	}
 	return strings.ToUpper(value[:1]) + value[1:]
+}
+
+// dotEnvValue reads a single key from a .env file without setting env vars.
+func dotEnvValue(path string, key string) string {
+	f, err := os.Open(path)
+	if err != nil {
+		return ""
+	}
+	defer f.Close()
+	scanner := bufio.NewScanner(f)
+	for scanner.Scan() {
+		line := strings.TrimSpace(scanner.Text())
+		if line == "" || strings.HasPrefix(line, "#") {
+			continue
+		}
+		k, v, ok := strings.Cut(line, "=")
+		if ok && strings.TrimSpace(k) == key {
+			return strings.Trim(strings.TrimSpace(v), `"'`)
+		}
+	}
+	return ""
 }
 
 func mustGetwd() string {
