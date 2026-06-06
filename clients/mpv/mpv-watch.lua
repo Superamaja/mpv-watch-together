@@ -164,18 +164,25 @@ local function prompt_text(prompt, default, callback)
 end
 
 local function show_menu()
-    local items = {
-        { "Toggle sync", "toggle" },
-        { "Set room", "room" },
-        { "Set display name", "name" },
-        { "Force sync", "force" },
+    local actions = {
+        { label = sync_enabled and "Turn sync off" or "Turn sync on", id = "toggle" },
+        { label = "Set room", id = "room" },
+        { label = "Set display name", id = "name" },
+        { label = "Force sync", id = "force" },
     }
 
     if input_ok and input.select then
-        input.select({
+        local labels = {}
+        for index, action in ipairs(actions) do
+            labels[index] = action.label
+        end
+
+        local ok, err = pcall(input.select, {
             prompt = "Watch Together",
-            items = items,
-            submit = function(id)
+            items = labels,
+            submit = function(index)
+                local action = actions[index]
+                local id = action and action.id
                 if id == "toggle" then
                     set_sync(not sync_enabled)
                 elseif id == "room" then
@@ -199,10 +206,17 @@ local function show_menu()
                 end
             end,
         })
+        if ok then
+            return
+        end
+
+        msg.warn("Watch Together menu failed: " .. tostring(err))
     else
-        mp.osd_message("Watch Together: Ctrl+w toggles sync")
-        set_sync(not sync_enabled)
+        msg.warn("mp.input.select is unavailable; falling back to sync toggle")
     end
+
+    mp.osd_message("Watch Together: Ctrl+w toggles sync")
+    set_sync(not sync_enabled)
 end
 
 mp.add_key_binding("Ctrl+w", "mpv-watch-menu", show_menu)
