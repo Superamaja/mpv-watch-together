@@ -9,15 +9,13 @@ import (
 	"fmt"
 	"io"
 	"net/http"
-	"net/url"
 	"strings"
 	"time"
 )
 
 type Client struct {
-	baseURL   string
-	authToken string
-	http      *http.Client
+	baseURL string
+	http    *http.Client
 }
 
 type HTTPError struct {
@@ -45,16 +43,39 @@ func IsNotFound(err error) bool {
 	return errors.As(err, &httpErr) && httpErr.Code == http.StatusNotFound
 }
 
-func New(baseURL string, authToken string) (*Client, error) {
+func New(baseURL string) (*Client, error) {
 	baseURL = strings.TrimRight(strings.TrimSpace(baseURL), "/")
 	if baseURL == "" {
 		return nil, errors.New("firebase database URL is required")
 	}
 	return &Client{
-		baseURL:   baseURL,
-		authToken: strings.TrimSpace(authToken),
-		http:      &http.Client{Timeout: 15 * time.Second},
+		baseURL: baseURL,
+		http:    &http.Client{Timeout: 15 * time.Second},
 	}, nil
+}
+
+// ServerTime fetches the Firebase server's current UTC time by reading the
+// Date header from a lightweight shallow GET. This works with open test-mode
+// rules and requires no authentication.
+func (c *Client) ServerTime(ctx context.Context, roomPath string) (time.Time, error) {
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, c.endpoint(roomPath)+"?shallow=true", nil)
+	if err != nil {
+		return time.Time{}, err
+	}
+	resp, err := c.http.Do(req)
+	if err != nil {
+		return time.Time{}, err
+	}
+	io.Copy(io.Discard, resp.Body)
+	resp.Body.Close()
+	if resp.StatusCode >= 400 && resp.StatusCode != http.StatusNotFound {
+		return time.Time{}, fmt.Errorf("firebase server time probe failed: %s", resp.Status)
+	}
+	dateHeader := resp.Header.Get("Date")
+	if dateHeader == "" {
+		return time.Time{}, errors.New("firebase response missing Date header")
+	}
+	return time.Parse(time.RFC1123, dateHeader)
 }
 
 func (c *Client) Get(ctx context.Context, path string, target any) error {
@@ -196,11 +217,5 @@ func (c *Client) doJSON(ctx context.Context, method string, path string, body an
 
 func (c *Client) endpoint(path string) string {
 	cleanPath := strings.Trim(path, "/")
-	endpoint := c.baseURL + "/" + cleanPath + ".json"
-	if c.authToken == "" {
-		return endpoint
-	}
-	values := url.Values{}
-	values.Set("auth", c.authToken)
-	return endpoint + "?" + values.Encode()
+	return c.baseURL + "/" + cleanPath + ".json"
 }

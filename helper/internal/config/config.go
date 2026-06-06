@@ -15,7 +15,6 @@ type Config struct {
 	DisplayName         string
 	UserID              string
 	FirebaseDatabaseURL string
-	FirebaseAuthToken   string
 }
 
 func Load(args []string) (Config, error) {
@@ -28,7 +27,6 @@ func Load(args []string) (Config, error) {
 		DisplayName:         envOrDefault("MPV_WATCH_DISPLAY_NAME", "mpv watcher"),
 		UserID:              envOrDefault("MPV_WATCH_USER_ID", randomishID()),
 		FirebaseDatabaseURL: os.Getenv("FIREBASE_DATABASE_URL"),
-		FirebaseAuthToken:   firstNonEmpty(os.Getenv("FIREBASE_AUTH_TOKEN"), os.Getenv("FIREBASE_DATABASE_SECRET")),
 	}
 
 	fs := flag.NewFlagSet("mpv-watch-helper", flag.ContinueOnError)
@@ -38,7 +36,6 @@ func Load(args []string) (Config, error) {
 	fs.StringVar(&cfg.DisplayName, "name", cfg.DisplayName, "display name")
 	fs.StringVar(&cfg.UserID, "user-id", cfg.UserID, "stable local user ID")
 	fs.StringVar(&cfg.FirebaseDatabaseURL, "firebase-url", cfg.FirebaseDatabaseURL, "Firebase Realtime Database URL")
-	fs.StringVar(&cfg.FirebaseAuthToken, "firebase-auth-token", cfg.FirebaseAuthToken, "Firebase auth token or database secret")
 	if err := fs.Parse(args); err != nil {
 		return Config{}, err
 	}
@@ -93,15 +90,6 @@ func envOrDefault(key string, fallback string) string {
 		return value
 	}
 	return fallback
-}
-
-func firstNonEmpty(values ...string) string {
-	for _, value := range values {
-		if strings.TrimSpace(value) != "" {
-			return strings.TrimSpace(value)
-		}
-	}
-	return ""
 }
 
 func randomishID() string {

@@ -50,7 +50,6 @@ type App struct {
 	streamCancel        context.CancelFunc
 	appCtx              context.Context
 	appCancel           context.CancelFunc
-	clockWarningSent    bool
 	subscribers         map[chan []byte]struct{}
 	guestBufferingSince map[string]int64
 }
@@ -60,7 +59,7 @@ type apiError struct {
 }
 
 func New(cfg config.Config) (*App, error) {
-	fb, err := firebase.New(cfg.FirebaseDatabaseURL, cfg.FirebaseAuthToken)
+	fb, err := firebase.New(cfg.FirebaseDatabaseURL)
 	if err != nil {
 		return nil, err
 	}
@@ -199,21 +198,22 @@ func (a *App) refreshServerClock(ctx context.Context) {
 	reqCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
 	defer cancel()
 
-	var offset float64
-	if err := a.firebase.Get(reqCtx, ".info/serverTimeOffset", &offset); err != nil {
-		a.mu.Lock()
-		shouldWarn := !a.clockWarningSent
-		a.clockWarningSent = true
-		a.mu.Unlock()
-		if shouldWarn {
-			slog.Warn("failed to refresh firebase server time offset; falling back to local helper time", "error", err)
-		}
+	a.mu.RLock()
+	roomID := a.cfg.RoomID
+	a.mu.RUnlock()
+	if roomID == "" {
 		return
 	}
 
+	serverTime, err := a.firebase.ServerTime(reqCtx, "rooms/"+roomID)
+	if err != nil {
+		slog.Warn("failed to refresh firebase server time; falling back to local helper time", "error", err)
+		return
+	}
+
+	offset := serverTime.UnixMilli() - protocol.NowMillis()
 	a.mu.Lock()
-	a.serverTimeOffset = int64(offset)
-	a.clockWarningSent = false
+	a.serverTimeOffset = offset
 	a.mu.Unlock()
 }
 
