@@ -314,7 +314,11 @@ func (a *App) startRoomStream() {
 				return
 			case err := <-errs:
 				if err != nil {
-					slog.Warn("firebase stream error", "error", err)
+					if firebase.IsNotFound(err) {
+						slog.Warn("firebase database path returned 404; check FIREBASE_DATABASE_URL points to Realtime Database, not authDomain/projectId/storageBucket", "room", roomID, "error", err)
+						return
+					}
+					slog.Warn("firebase stream error", "room", roomID, "error", err)
 				}
 			case _, ok := <-events:
 				if !ok {
@@ -333,6 +337,10 @@ func (a *App) refreshRoom(ctx context.Context, roomID string) {
 	reqCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
 	defer cancel()
 	if err := a.firebase.Get(reqCtx, roomPath(roomID), &room); err != nil {
+		if firebase.IsNotFound(err) {
+			slog.Warn("firebase database path returned 404; check FIREBASE_DATABASE_URL points to Realtime Database, not authDomain/projectId/storageBucket", "room", roomID, "error", err)
+			return
+		}
 		slog.Warn("failed to refresh room", "room", roomID, "error", err)
 		return
 	}

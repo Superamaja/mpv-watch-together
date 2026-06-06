@@ -20,9 +20,29 @@ type Client struct {
 	http      *http.Client
 }
 
+type HTTPError struct {
+	Operation string
+	Path      string
+	Status    string
+	Code      int
+	Body      string
+}
+
+func (e HTTPError) Error() string {
+	if e.Operation == "" {
+		return fmt.Sprintf("firebase request failed: %s: %s", e.Status, e.Body)
+	}
+	return fmt.Sprintf("firebase %s %s failed: %s: %s", e.Operation, e.Path, e.Status, e.Body)
+}
+
 type StreamEvent struct {
 	Event string
 	Data  json.RawMessage
+}
+
+func IsNotFound(err error) bool {
+	var httpErr HTTPError
+	return errors.As(err, &httpErr) && httpErr.Code == http.StatusNotFound
 }
 
 func New(baseURL string, authToken string) (*Client, error) {
@@ -68,6 +88,9 @@ func (c *Client) Stream(ctx context.Context, path string) (<-chan StreamEvent, <
 			}
 			if err := c.streamOnce(ctx, path, events); err != nil && ctx.Err() == nil {
 				errs <- err
+				if IsNotFound(err) {
+					return
+				}
 				time.Sleep(backoff)
 				if backoff < 8*time.Second {
 					backoff *= 2
@@ -95,7 +118,13 @@ func (c *Client) streamOnce(ctx context.Context, path string, events chan<- Stre
 	defer resp.Body.Close()
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 		body, _ := io.ReadAll(io.LimitReader(resp.Body, 2048))
-		return fmt.Errorf("firebase stream failed: %s: %s", resp.Status, strings.TrimSpace(string(body)))
+		return HTTPError{
+			Operation: "stream",
+			Path:      path,
+			Status:    resp.Status,
+			Code:      resp.StatusCode,
+			Body:      strings.TrimSpace(string(body)),
+		}
 	}
 
 	scanner := bufio.NewScanner(resp.Body)
@@ -150,7 +179,13 @@ func (c *Client) doJSON(ctx context.Context, method string, path string, body an
 	defer resp.Body.Close()
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 		respBody, _ := io.ReadAll(io.LimitReader(resp.Body, 4096))
-		return fmt.Errorf("firebase %s %s failed: %s: %s", method, path, resp.Status, strings.TrimSpace(string(respBody)))
+		return HTTPError{
+			Operation: method,
+			Path:      path,
+			Status:    resp.Status,
+			Code:      resp.StatusCode,
+			Body:      strings.TrimSpace(string(respBody)),
+		}
 	}
 	if target == nil {
 		io.Copy(io.Discard, resp.Body)

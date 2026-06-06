@@ -158,6 +158,31 @@ FIREBASE_DATABASE_URL=https://your-project-default-rtdb.firebaseio.com
 
 For early private testing, Firebase test-mode rules are the fastest path. For anything shared more broadly, add proper auth/rules before distributing the app.
 
+## Troubleshooting
+
+### Firebase 404 Not Found
+
+If the helper prints a warning like this:
+
+```text
+firebase database path returned 404
+```
+
+Check the bundle's `.env`. `FIREBASE_DATABASE_URL` must be the Realtime Database URL, not the Firebase auth domain, project ID, web app URL, or storage bucket.
+
+Use a URL shaped like one of these:
+
+```text
+https://your-project-default-rtdb.firebaseio.com
+https://your-project-default-rtdb.REGION.firebasedatabase.app
+```
+
+Also confirm Realtime Database is enabled in the Firebase console. A room that simply does not exist yet should not normally produce HTTP 404; the host will create/update the room after sync is enabled and mpv sends playback state.
+
+### Startup Shows Empty Room
+
+This is normal if you start the helper without `-room` or `MPV_WATCH_ROOM`. The mpv Lua script posts the room from `mpv-watch.conf` after mpv starts.
+
 ## Development Layout
 
 ```text
