@@ -132,16 +132,61 @@ func (a *App) handlePostConfig(w http.ResponseWriter, r *http.Request) {
 	}
 
 	a.mu.Lock()
+	previousRoomID := a.cfg.RoomID
 	a.cfg.Role = req.Role
 	a.cfg.RoomID = strings.TrimSpace(req.RoomID)
 	if strings.TrimSpace(req.DisplayName) != "" {
 		a.cfg.DisplayName = strings.TrimSpace(req.DisplayName)
 	}
+	cfg := a.cfg
+	enabled := a.syncEnabled
+	lastLocal := a.lastLocal
+	lastLocal.DisplayName = cfg.DisplayName
+	a.lastLocal = lastLocal
 	a.mu.Unlock()
 
-	a.startRoomStream()
+	if previousRoomID != cfg.RoomID {
+		a.startRoomStream()
+	}
+	if enabled {
+		go a.updateParticipantConfig(context.Background(), cfg, lastLocal)
+	}
 	writeJSON(w, http.StatusOK, map[string]bool{"ok": true})
 	a.publishState()
+}
+
+func (a *App) updateParticipantConfig(ctx context.Context, cfg config.Config, state protocol.ParticipantState) {
+	if cfg.RoomID == "" || cfg.UserID == "" {
+		return
+	}
+
+	reqCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
+	defer cancel()
+
+	now := protocol.NowMillis()
+	state.UserID = cfg.UserID
+	state.DisplayName = cfg.DisplayName
+	state.SampledAt = now
+	state.LastUpdated = now
+	state.LastSeen = now
+	state.Connected = true
+	state.TimeReliable = true
+
+	if cfg.Role == protocol.RoleHost {
+		patch := map[string]any{
+			"roomId":    cfg.RoomID,
+			"host":      state,
+			"updatedAt": now,
+		}
+		if err := a.firebase.Patch(reqCtx, roomPath(cfg.RoomID), patch, nil); err != nil {
+			slog.Warn("failed to update host config in firebase", "room", cfg.RoomID, "error", err)
+		}
+		return
+	}
+
+	if err := a.firebase.Patch(reqCtx, roomPath(cfg.RoomID)+"/guests/"+cfg.UserID, state, nil); err != nil {
+		slog.Warn("failed to update guest config in firebase", "room", cfg.RoomID, "user", cfg.UserID, "error", err)
+	}
 }
 
 func (a *App) handlePostMPVState(w http.ResponseWriter, r *http.Request) {
