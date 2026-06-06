@@ -34,10 +34,33 @@ local last_time_pos = nil
 local last_time_wall = nil
 local last_auto_force_sync_at = 0
 local host_found_notified = false
-local helper_connected = true
+local helper_connected = nil  -- nil=never tried, true=ok, false=was ok then lost
+local state_timer = nil
+local command_timer = nil
 local poll_commands = nil
 local set_sync = nil
 local send_state = nil
+
+local function start_timers()
+    helper_connected = nil
+    if not state_timer then
+        state_timer = mp.add_periodic_timer(opts.state_interval, function() send_state() end)
+    end
+    if not command_timer then
+        command_timer = mp.add_periodic_timer(opts.command_interval, function() poll_commands() end)
+    end
+end
+
+local function stop_timers()
+    if state_timer then
+        state_timer:kill()
+        state_timer = nil
+    end
+    if command_timer then
+        command_timer:kill()
+        command_timer = nil
+    end
+end
 
 local function should_show_event(event, user_id)
     if not event or not event.message then
@@ -130,6 +153,7 @@ set_sync = function(enabled)
     local _, err = request("POST", "/api/sync", { enabled = enabled })
     if err then
         sync_enabled = false
+        stop_timers()
         if enabled and err == "no host found in room" then
             mp.osd_message("Watch Together: no host found in room")
         else
@@ -139,13 +163,16 @@ set_sync = function(enabled)
         return
     end
     sync_enabled = enabled
+    if enabled then
+        start_timers()
+    else
+        stop_timers()
+    end
     mp.osd_message(enabled and "Watch Together: sync on" or "Watch Together: sync off")
     if enabled and opts.role == "guest" then
         force_next_host_apply = true
         host_found_notified = false
-        if poll_commands then
-            poll_commands()
-        end
+        poll_commands()
     elseif not enabled then
         host_found_notified = false
     end
@@ -253,16 +280,18 @@ end
 poll_commands = function()
     local data, err = request("GET", "/api/mpv/commands")
     if err or not data then
-        if helper_connected then
+        if helper_connected == true then
             helper_connected = false
             mp.osd_message("Watch Together: connection lost, reconnecting")
+        else
+            helper_connected = false
         end
         return
     end
-    if not helper_connected then
-        helper_connected = true
+    if helper_connected == false then
         mp.osd_message("Watch Together: reconnected")
     end
+    helper_connected = true
     if type(data.serverNow) == "number" then
         last_server_now = data.serverNow
         last_server_wall = mp.get_time()
@@ -418,7 +447,18 @@ local function show_menu()
     set_sync(not sync_enabled)
 end
 
-mp.add_key_binding("Ctrl+w", "mpv-watch-menu", show_menu)
+-- Lazily push config on the first menu open so startup stays zero-cost when
+-- sync_on_start=no. Once config is pushed (or sync is already on) this is a
+-- no-op on every subsequent call.
+local config_pushed = false
+
+mp.add_key_binding("Ctrl+w", "mpv-watch-menu", function()
+    if not config_pushed and not sync_enabled then
+        config_pushed = true
+        post_config()
+    end
+    show_menu()
+end)
 
 mp.observe_property("time-pos", "number", function(_, current_time)
     if not current_time then
@@ -457,7 +497,8 @@ mp.observe_property("time-pos", "number", function(_, current_time)
     last_time_wall = now
 end)
 
-post_config()
-set_sync(sync_enabled)
-mp.add_periodic_timer(opts.state_interval, send_state)
-mp.add_periodic_timer(opts.command_interval, poll_commands)
+if opts.sync_on_start == "yes" then
+    config_pushed = true
+    post_config()
+    set_sync(true)
+end
