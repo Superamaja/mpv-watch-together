@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"io/fs"
 	"log/slog"
 	"math/rand"
@@ -239,6 +240,11 @@ func (a *App) handlePostSync(w http.ResponseWriter, r *http.Request) {
 }
 
 func (a *App) handlePostForceSync(w http.ResponseWriter, r *http.Request) {
+	stateOverride, hasStateOverride, ok := decodeOptionalPlaybackState(w, r)
+	if !ok {
+		return
+	}
+
 	a.mu.RLock()
 	cfg := a.cfg
 	lastLocal := a.lastLocal
@@ -254,17 +260,33 @@ func (a *App) handlePostForceSync(w http.ResponseWriter, r *http.Request) {
 	}
 
 	now := protocol.NowMillis()
+	sourceState := lastLocal
+	if hasStateOverride {
+		sourceState = stateOverride
+		sourceState.UserID = cfg.UserID
+		sourceState.DisplayName = cfg.DisplayName
+		sourceState.SampledAt = now
+		sourceState.LastUpdated = now
+		sourceState.LastSeen = now
+		sourceState.Connected = true
+		sourceState.TimeReliable = true
+
+		a.mu.Lock()
+		a.lastLocal = sourceState
+		a.mu.Unlock()
+	}
+
 	force := protocol.ForceSync{
 		SyncID:      fmt.Sprintf("%s_%d_%06d", cfg.UserID, now, rand.Intn(1000000)),
 		IssuedAt:    now,
 		IssuedBy:    cfg.UserID,
-		CurrentTime: lastLocal.CurrentTime,
-		IsPlaying:   lastLocal.IsPlaying,
-		IsBuffering: lastLocal.IsBuffering,
-		Duration:    lastLocal.Duration,
+		CurrentTime: sourceState.CurrentTime,
+		IsPlaying:   sourceState.IsPlaying,
+		IsBuffering: sourceState.IsBuffering,
+		Duration:    sourceState.Duration,
 		SampledAt:   now,
 	}
-	host := lastLocal
+	host := sourceState
 	host.UserID = cfg.UserID
 	host.DisplayName = cfg.DisplayName
 	host.SampledAt = now
@@ -285,6 +307,34 @@ func (a *App) handlePostForceSync(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, force)
+}
+
+func decodeOptionalPlaybackState(w http.ResponseWriter, r *http.Request) (protocol.ParticipantState, bool, bool) {
+	defer r.Body.Close()
+
+	var raw map[string]json.RawMessage
+	if err := json.NewDecoder(r.Body).Decode(&raw); err != nil {
+		if err == io.EOF {
+			return protocol.ParticipantState{}, false, true
+		}
+		writeJSON(w, http.StatusBadRequest, apiError{Error: err.Error()})
+		return protocol.ParticipantState{}, false, false
+	}
+	if _, ok := raw["currentTime"]; !ok {
+		return protocol.ParticipantState{}, false, true
+	}
+
+	payload, err := json.Marshal(raw)
+	if err != nil {
+		writeJSON(w, http.StatusBadRequest, apiError{Error: err.Error()})
+		return protocol.ParticipantState{}, false, false
+	}
+	var state protocol.ParticipantState
+	if err := json.Unmarshal(payload, &state); err != nil {
+		writeJSON(w, http.StatusBadRequest, apiError{Error: err.Error()})
+		return protocol.ParticipantState{}, false, false
+	}
+	return state, true, true
 }
 
 func (a *App) handleDeleteGuest(w http.ResponseWriter, r *http.Request) {

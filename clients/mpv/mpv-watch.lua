@@ -178,8 +178,13 @@ poll_commands = function()
     end
 end
 
-local function force_sync()
-    local _, err = request("POST", "/api/host/force-sync", {})
+local function force_sync(current_time)
+    local state = playback_state()
+    if type(current_time) == "number" then
+        state.currentTime = current_time
+    end
+
+    local _, err = request("POST", "/api/host/force-sync", state)
     if err then
         mp.osd_message("Watch Together: force sync failed")
         msg.warn("Force sync failed: " .. err)
@@ -275,7 +280,7 @@ mp.observe_property("time-pos", "number", function(_, current_time)
         local cooldown = tonumber(opts.host_seek_cooldown) or 1.5
         if drift >= threshold and now - last_auto_force_sync_at >= cooldown then
             last_auto_force_sync_at = now
-            force_sync()
+            force_sync(current_time)
         end
     elseif opts.role == "guest" and sync_enabled and opts.seek_lock == "yes" and last_host_state then
         local expected_host_time = projected_time(last_host_state)
