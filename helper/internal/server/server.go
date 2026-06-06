@@ -61,7 +61,23 @@ func (a *App) Handler() http.Handler {
 	mux.HandleFunc("GET /api/events", a.handleEvents)
 
 	staticFS, _ := fs.Sub(web.Static, "static")
-	mux.Handle("/", http.FileServer(http.FS(staticFS)))
+	staticHandler := http.FileServer(http.FS(staticFS))
+	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
+		a.mu.RLock()
+		role := a.cfg.Role
+		a.mu.RUnlock()
+		if role != protocol.RoleHost {
+			if r.URL.Path == "/" {
+				w.Header().Set("Content-Type", "text/plain; charset=utf-8")
+				w.WriteHeader(http.StatusNotFound)
+				_, _ = w.Write([]byte("Guest helper is running. The browser dashboard is only available for host role.\nUse mpv Ctrl+w for guest controls.\n"))
+				return
+			}
+			http.NotFound(w, r)
+			return
+		}
+		staticHandler.ServeHTTP(w, r)
+	})
 	return withCORS(mux)
 }
 

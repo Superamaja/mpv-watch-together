@@ -269,6 +269,20 @@ func quickstart(role string, target target, binaryName string) string {
 	if target.OS == "windows" {
 		runCommand = `.\\helper\\` + binaryName
 	}
+	dashboard := `## Host Dashboard
+
+Open:
+
+http://127.0.0.1:8765
+
+The dashboard can change room/name, toggle sync, view guests, remove offline guests, and send force sync.
+`
+	if role == "guest" {
+		dashboard = `## Guest Controls
+
+Guests do not use a browser dashboard. Keep the helper running and use mpv's Ctrl+w menu for room/name/sync controls.
+`
+	}
 
 	return fmt.Sprintf(`# mpv Watch Together - %s
 
@@ -290,14 +304,8 @@ func quickstart(role string, target target, binaryName string) string {
 
 5. Open mpv and press Ctrl+w for the Watch Together menu.
 
-## Host Dashboard
-
-If this is the host bundle, open:
-
-http://127.0.0.1:8765
-
-The dashboard can change room/name, toggle sync, view guests, and send force sync.
-`, title(role), binaryName, runCommand)
+%s
+`, title(role), binaryName, runCommand, dashboard)
 }
 
 func parseTargets(value string) ([]target, error) {

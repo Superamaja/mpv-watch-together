@@ -30,6 +30,7 @@ local last_host_state = nil
 local last_time_pos = nil
 local last_time_wall = nil
 local last_auto_force_sync_at = 0
+local host_found_notified = false
 local poll_commands = nil
 
 local function request(method, path, body)
@@ -83,9 +84,12 @@ local function set_sync(enabled)
     mp.osd_message(enabled and "Watch Together: sync on" or "Watch Together: sync off")
     if enabled and opts.role == "guest" then
         force_next_host_apply = true
+        host_found_notified = false
         if poll_commands then
             poll_commands()
         end
+    elseif not enabled then
+        host_found_notified = false
     end
 end
 
@@ -93,7 +97,7 @@ local function playback_state()
     return {
         currentTime = mp.get_property_number("time-pos", 0),
         isPlaying = not mp.get_property_bool("pause", true),
-        isBuffering = mp.get_property_bool("core-idle", false),
+        isBuffering = mp.get_property_bool("paused-for-cache", false),
         duration = mp.get_property_number("duration", 0),
     }
 end
@@ -163,9 +167,14 @@ poll_commands = function()
         local force = force_next_host_apply
         force_next_host_apply = false
         apply_remote_state(data.host, force)
-        if force then
+        if opts.role == "guest" and sync_enabled and not host_found_notified then
+            host_found_notified = true
+            mp.osd_message(force and "Watch Together: host found, synced" or "Watch Together: host found")
+        elseif force then
             mp.osd_message("Watch Together: synced to host")
         end
+    elseif opts.role == "guest" and sync_enabled then
+        host_found_notified = false
     end
 end
 
@@ -196,7 +205,6 @@ local function show_menu()
         { label = sync_enabled and "Turn sync off" or "Turn sync on", id = "toggle" },
         { label = "Set room", id = "room" },
         { label = "Set display name", id = "name" },
-        { label = "Force sync", id = "force" },
     }
 
     if input_ok and input.select then
@@ -229,8 +237,6 @@ local function show_menu()
                             mp.osd_message("Watch Together: name set")
                         end
                     end)
-                elseif id == "force" then
-                    force_sync()
                 end
             end,
         })

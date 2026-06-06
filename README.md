@@ -37,6 +37,8 @@ dist/
 
 Give yourself the matching `host` zip. Give guests the matching `guest` zip for their OS/CPU.
 
+Only the host uses the browser dashboard. Guests keep the helper running in the background and use mpv's `Ctrl+w` menu.
+
 Each bundle contains:
 
 ```text
@@ -111,6 +113,8 @@ http://127.0.0.1:8765
 ```
 
 The dashboard should show the configured room, host role, Sync toggle, Force Sync button, host state, and guest list.
+
+Guest helpers intentionally do not serve the dashboard. If a guest opens `http://127.0.0.1:8765`, they should see a short message telling them to use mpv controls instead.
 
 ## Test with mpv Locally
 
@@ -202,6 +206,7 @@ archive/stremio-userscript         old Stremio userscript project
 
 - Explicit sync on/off from mpv.
 - Sync-on-join: guests seek to the host when enabling sync.
+- Guest OSD notification when a host is found after syncing.
 - Guest seek-lock: synced guests snap back if they scrub away.
 - Host auto force-sync after seeking.
 - Host dashboard guest list with online/offline state, buffering, rough drift, and last-seen age.
