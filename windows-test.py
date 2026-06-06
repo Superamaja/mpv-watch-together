@@ -42,8 +42,8 @@ ROOM = "room123"
 # Internal state
 # ---------------------------------------------------------------------------
 _processes: list[subprocess.Popen] = []
-_backed_up: dict[Path, Path] = {}   # dst -> backup path
-_freshly_installed: list[Path] = [] # files to remove if no backup existed
+_backed_up: dict[Path, Path] = {}  # dst -> backup path
+_freshly_installed: list[Path] = []  # files to remove if no backup existed
 _cleaned_up = False
 
 
@@ -52,12 +52,15 @@ _cleaned_up = False
 # ---------------------------------------------------------------------------
 def check_required_files() -> None:
     required = {
-        "host helper binary":   HOST_BUNDLE / "helper" / "mpv-watch-helper.exe",
-        "guest helper binary":  GUEST_BUNDLE / "helper" / "mpv-watch-helper.exe",
-        "Lua script":           HOST_BUNDLE / "mpv" / "scripts" / "mpv-watch.lua",
+        "host helper binary": HOST_BUNDLE / "helper" / "mpv-watch-helper.exe",
+        "guest helper binary": GUEST_BUNDLE / "helper" / "mpv-watch-helper.exe",
+        "Lua script": HOST_BUNDLE / "mpv" / "scripts" / "mpv-watch.lua",
         "host script-opts conf": HOST_BUNDLE / "mpv" / "script-opts" / "mpv-watch.conf",
-        "guest script-opts conf": GUEST_BUNDLE / "mpv" / "script-opts" / "mpv-watch.conf",
-        "video file":           VIDEO_PATH,
+        "guest script-opts conf": GUEST_BUNDLE
+        / "mpv"
+        / "script-opts"
+        / "mpv-watch.conf",
+        "video file": VIDEO_PATH,
     }
     missing = {label: path for label, path in required.items() if not path.exists()}
     if missing:
@@ -125,7 +128,9 @@ def ensure_env_file(bundle_dir: Path) -> None:
 # ---------------------------------------------------------------------------
 # Process launchers
 # ---------------------------------------------------------------------------
-def start_helper(bundle_dir: Path, extra_args: list[str] | None = None) -> subprocess.Popen:
+def start_helper(
+    bundle_dir: Path, extra_args: list[str] | None = None
+) -> subprocess.Popen:
     exe = bundle_dir / "helper" / "mpv-watch-helper.exe"
     cmd = [str(exe)] + (extra_args or [])
     # Use CREATE_NEW_CONSOLE so each helper gets its own window and log output.
@@ -218,18 +223,22 @@ def main() -> None:
     time.sleep(1)
 
     # --- mpv instances ---
-    host_opts = ",".join([
-        "mpv-watch-helper_url=http://127.0.0.1:8765",
-        "mpv-watch-role=host",
-        "mpv-watch-room=" + ROOM,
-        "mpv-watch-display_name=Host",
-    ])
-    guest_opts = ",".join([
-        "mpv-watch-helper_url=http://127.0.0.1:8766",
-        "mpv-watch-role=guest",
-        "mpv-watch-room=" + ROOM,
-        "mpv-watch-display_name=Guest",
-    ])
+    host_opts = ",".join(
+        [
+            "mpv-watch-helper_url=http://127.0.0.1:8765",
+            "mpv-watch-role=host",
+            "mpv-watch-room=" + ROOM,
+            "mpv-watch-display_name=Host",
+        ]
+    )
+    guest_opts = ",".join(
+        [
+            "mpv-watch-helper_url=http://127.0.0.1:8766",
+            "mpv-watch-role=guest",
+            "mpv-watch-room=" + ROOM,
+            "mpv-watch-display_name=Guest",
+        ]
+    )
 
     print("\n[start] host  mpv")
     start_mpv("mpv — HOST", host_opts)
