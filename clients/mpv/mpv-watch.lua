@@ -28,6 +28,7 @@ local last_event_id = nil
 local last_server_now = nil
 local last_server_wall = nil
 local applying_remote_seek = false
+local applying_remote_pause = false
 local force_next_host_apply = false
 local last_host_state = nil
 local last_time_pos = nil
@@ -269,12 +270,14 @@ local function apply_remote_state(state, force)
         end
     end
 
+    applying_remote_pause = true
     if state.isBuffering then
         mp.set_property_bool("pause", true)
         mp.osd_message("Watch Together: host is buffering")
     else
         mp.set_property_bool("pause", not state.isPlaying)
     end
+    applying_remote_pause = false
 end
 
 poll_commands = function()
@@ -458,6 +461,26 @@ mp.add_key_binding("Ctrl+w", "mpv-watch-menu", function()
         post_config()
     end
     show_menu()
+end)
+
+mp.observe_property("pause", "bool", function(_, paused)
+    if paused or not sync_enabled or opts.role ~= "guest" or applying_remote_pause then
+        return
+    end
+    -- Guest manually unpaused while host is paused — re-pause and snap back.
+    if not last_host_state or last_host_state.isPlaying then
+        return
+    end
+    local target = projected_time(last_host_state)
+    applying_remote_pause = true
+    mp.set_property_bool("pause", true)
+    applying_remote_pause = false
+    if target then
+        applying_remote_seek = true
+        mp.set_property_number("time-pos", target)
+        applying_remote_seek = false
+    end
+    mp.osd_message("Watch Together: paused by host")
 end)
 
 mp.observe_property("time-pos", "number", function(_, current_time)
