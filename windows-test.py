@@ -102,15 +102,24 @@ def install_mpv_files() -> None:
 # ---------------------------------------------------------------------------
 # .env bootstrapping
 # ---------------------------------------------------------------------------
+ROOT_ENV = REPO_ROOT / ".env"
+
+
 def ensure_env_file(bundle_dir: Path) -> None:
+    """Copy the project-root .env into bundle_dir so the helper picks up the real Firebase URL."""
+    if not ROOT_ENV.exists():
+        print(f"  WARNING: no .env found at repo root ({ROOT_ENV})")
+        return
     env_file = bundle_dir / ".env"
-    example = bundle_dir / ".env.example"
-    if not env_file.exists():
-        if example.exists():
-            shutil.copy2(example, env_file)
-            print(f"  created .env from .env.example in {bundle_dir.name}")
-        else:
-            print(f"  WARNING: no .env or .env.example in {bundle_dir.name}")
+    if env_file.exists():
+        backup = env_file.with_suffix(".env.test-bak")
+        shutil.copy2(env_file, backup)
+        _backed_up[env_file] = backup
+        print(f"  backed up {bundle_dir.name}/.env")
+    else:
+        _freshly_installed.append(env_file)
+    shutil.copy2(ROOT_ENV, env_file)
+    print(f"  copied root .env → {bundle_dir.name}/.env")
 
 
 # ---------------------------------------------------------------------------
