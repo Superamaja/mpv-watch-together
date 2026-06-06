@@ -103,29 +103,6 @@ def install_mpv_files() -> None:
 
 
 # ---------------------------------------------------------------------------
-# .env bootstrapping
-# ---------------------------------------------------------------------------
-ROOT_ENV = REPO_ROOT / ".env"
-
-
-def ensure_env_file(bundle_dir: Path) -> None:
-    """Copy the project-root .env into bundle_dir so the helper picks up the real Firebase URL."""
-    if not ROOT_ENV.exists():
-        print(f"  WARNING: no .env found at repo root ({ROOT_ENV})")
-        return
-    env_file = bundle_dir / ".env"
-    if env_file.exists():
-        backup = env_file.with_suffix(".env.test-bak")
-        shutil.copy2(env_file, backup)
-        _backed_up[env_file] = backup
-        print(f"  backed up {bundle_dir.name}/.env")
-    else:
-        _freshly_installed.append(env_file)
-    shutil.copy2(ROOT_ENV, env_file)
-    print(f"  copied root .env → {bundle_dir.name}/.env")
-
-
-# ---------------------------------------------------------------------------
 # Process launchers
 # ---------------------------------------------------------------------------
 def start_helper(
@@ -205,13 +182,9 @@ def main() -> None:
     check_required_files()
     install_mpv_files()
 
-    print("\n[env] bootstrapping .env files")
-    ensure_env_file(HOST_BUNDLE)
-    ensure_env_file(GUEST_BUNDLE)
-
     # --- helpers ---
     print("\n[start] host helper  →", HOST_ADDR)
-    start_helper(HOST_BUNDLE)  # reads -addr from conf/env default (8765)
+    start_helper(HOST_BUNDLE)  # Firebase URL baked in at build time; addr defaults to 8765
 
     print("[start] guest helper →", GUEST_ADDR)
     start_helper(
