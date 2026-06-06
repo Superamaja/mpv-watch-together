@@ -32,6 +32,15 @@ local last_time_wall = nil
 local last_auto_force_sync_at = 0
 local host_found_notified = false
 local poll_commands = nil
+local set_sync = nil
+local send_state = nil
+
+local function trim(value)
+    if type(value) ~= "string" then
+        return ""
+    end
+    return value:gsub("^%s+", ""):gsub("%s+$", "")
+end
 
 local function request(method, path, body)
     local args = {
@@ -70,10 +79,13 @@ local function post_config()
     })
     if err then
         msg.warn("Failed to save helper config: " .. err)
+        return false
     end
+    msg.debug("Saved helper config: room=" .. opts.room .. " displayName=" .. opts.display_name)
+    return true
 end
 
-local function set_sync(enabled)
+set_sync = function(enabled)
     sync_enabled = enabled
     local _, err = request("POST", "/api/sync", { enabled = enabled })
     if err then
@@ -91,6 +103,28 @@ local function set_sync(enabled)
     elseif not enabled then
         host_found_notified = false
     end
+end
+
+local function save_runtime_config(changed_room)
+    local was_synced = sync_enabled
+    if changed_room and was_synced then
+        set_sync(false)
+    end
+
+    local saved = post_config()
+
+    if changed_room then
+        last_host_state = nil
+        host_found_notified = false
+        force_next_host_apply = opts.role == "guest"
+        if was_synced then
+            set_sync(true)
+        end
+    elseif saved and sync_enabled and send_state then
+        send_state()
+    end
+
+    return saved
 end
 
 local function is_buffering()
@@ -116,7 +150,7 @@ local function playback_state()
     }
 end
 
-local function send_state()
+send_state = function()
     if not sync_enabled then
         return
     end
@@ -212,11 +246,18 @@ local function prompt_text(prompt, default, callback)
         input.get({
             prompt = prompt,
             default_text = default or "",
+            cursor_position = #(default or "") + 1,
             submit = callback,
         })
         return
     end
     mp.osd_message(prompt .. " requires mp.input support")
+end
+
+local function prompt_text_next_tick(prompt, default, callback)
+    mp.add_timeout(0.05, function()
+        prompt_text(prompt, default, callback)
+    end)
 end
 
 local function show_menu()
@@ -241,19 +282,31 @@ local function show_menu()
                 if id == "toggle" then
                     set_sync(not sync_enabled)
                 elseif id == "room" then
-                    prompt_text("Room", opts.room, function(value)
-                        if value and value ~= "" then
-                            opts.room = value
-                            post_config()
-                            mp.osd_message("Watch Together: room set")
+                    prompt_text_next_tick("Room", opts.room, function(value)
+                        local next_room = trim(value)
+                        if next_room ~= "" and next_room ~= opts.room then
+                            opts.room = next_room
+                            if save_runtime_config(true) then
+                                mp.osd_message("Watch Together: room set to " .. opts.room)
+                            else
+                                mp.osd_message("Watch Together: room update failed")
+                            end
+                        elseif next_room == opts.room then
+                            mp.osd_message("Watch Together: room unchanged")
                         end
                     end)
                 elseif id == "name" then
-                    prompt_text("Display name", opts.display_name, function(value)
-                        if value and value ~= "" then
-                            opts.display_name = value
-                            post_config()
-                            mp.osd_message("Watch Together: name set")
+                    prompt_text_next_tick("Display name", opts.display_name, function(value)
+                        local next_name = trim(value)
+                        if next_name ~= "" and next_name ~= opts.display_name then
+                            opts.display_name = next_name
+                            if save_runtime_config(false) then
+                                mp.osd_message("Watch Together: name set to " .. opts.display_name)
+                            else
+                                mp.osd_message("Watch Together: name update failed")
+                            end
+                        elseif next_name == opts.display_name then
+                            mp.osd_message("Watch Together: name unchanged")
                         end
                     end)
                 end
