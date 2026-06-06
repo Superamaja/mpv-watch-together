@@ -250,6 +250,11 @@ display_name=%s
 sync_on_start=no
 state_interval=1.0
 command_interval=0.5
+seek_lock=yes
+seek_lock_threshold=3.0
+auto_force_sync_on_seek=yes
+host_seek_threshold=2.5
+host_seek_cooldown=1.5
 `, role, room, displayName)
 }
 

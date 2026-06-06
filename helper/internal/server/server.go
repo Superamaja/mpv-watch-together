@@ -57,6 +57,7 @@ func (a *App) Handler() http.Handler {
 	mux.HandleFunc("GET /api/mpv/commands", a.handleGetMPVCommands)
 	mux.HandleFunc("POST /api/sync", a.handlePostSync)
 	mux.HandleFunc("POST /api/host/force-sync", a.handlePostForceSync)
+	mux.HandleFunc("DELETE /api/host/guests/{userId}", a.handleDeleteGuest)
 	mux.HandleFunc("GET /api/events", a.handleEvents)
 
 	staticFS, _ := fs.Sub(web.Static, "static")
@@ -66,10 +67,17 @@ func (a *App) Handler() http.Handler {
 
 func (a *App) Close() {
 	a.mu.Lock()
-	defer a.mu.Unlock()
+	cfg := a.cfg
 	if a.streamCancel != nil {
 		a.streamCancel()
 		a.streamCancel = nil
+	}
+	a.mu.Unlock()
+
+	if cfg.Role == protocol.RoleGuest && cfg.RoomID != "" && cfg.UserID != "" {
+		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+		defer cancel()
+		_ = a.firebase.Delete(ctx, roomPath(cfg.RoomID)+"/guests/"+cfg.UserID)
 	}
 }
 
@@ -261,6 +269,34 @@ func (a *App) handlePostForceSync(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, force)
+}
+
+func (a *App) handleDeleteGuest(w http.ResponseWriter, r *http.Request) {
+	a.mu.RLock()
+	cfg := a.cfg
+	a.mu.RUnlock()
+	if cfg.Role != protocol.RoleHost {
+		writeJSON(w, http.StatusForbidden, apiError{Error: "guest removal is only available for host role"})
+		return
+	}
+	if cfg.RoomID == "" {
+		writeJSON(w, http.StatusBadRequest, apiError{Error: "room is required"})
+		return
+	}
+
+	userID := strings.TrimSpace(r.PathValue("userId"))
+	if userID == "" {
+		writeJSON(w, http.StatusBadRequest, apiError{Error: "userId is required"})
+		return
+	}
+
+	ctx, cancel := context.WithTimeout(r.Context(), 5*time.Second)
+	defer cancel()
+	if err := a.firebase.Delete(ctx, roomPath(cfg.RoomID)+"/guests/"+userID); err != nil {
+		writeJSON(w, http.StatusBadGateway, apiError{Error: err.Error()})
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]bool{"ok": true})
 }
 
 func (a *App) handleEvents(w http.ResponseWriter, r *http.Request) {

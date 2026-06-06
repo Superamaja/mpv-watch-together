@@ -13,6 +13,11 @@ local opts = {
     sync_on_start = "no",
     state_interval = 1.0,
     command_interval = 0.5,
+    seek_lock = "yes",
+    seek_lock_threshold = 3.0,
+    auto_force_sync_on_seek = "yes",
+    host_seek_threshold = 2.5,
+    host_seek_cooldown = 1.5,
 }
 
 options.read_options(opts, "mpv-watch")
@@ -20,6 +25,12 @@ options.read_options(opts, "mpv-watch")
 local sync_enabled = opts.sync_on_start == "yes"
 local last_force_sync_id = nil
 local applying_remote_seek = false
+local force_next_host_apply = false
+local last_host_state = nil
+local last_time_pos = nil
+local last_time_wall = nil
+local last_auto_force_sync_at = 0
+local poll_commands = nil
 
 local function request(method, path, body)
     local args = {
@@ -70,6 +81,12 @@ local function set_sync(enabled)
         return
     end
     mp.osd_message(enabled and "Watch Together: sync on" or "Watch Together: sync off")
+    if enabled and opts.role == "guest" then
+        force_next_host_apply = true
+        if poll_commands then
+            poll_commands()
+        end
+    end
 end
 
 local function playback_state()
@@ -107,6 +124,10 @@ local function apply_remote_state(state, force)
         return
     end
 
+    if type(state.currentTime) == "number" then
+        last_host_state = state
+    end
+
     if force then
         local target = projected_time(state)
         if target then
@@ -124,7 +145,7 @@ local function apply_remote_state(state, force)
     end
 end
 
-local function poll_commands()
+poll_commands = function()
     local data, err = request("GET", "/api/mpv/commands")
     if err or not data then
         return
@@ -138,7 +159,14 @@ local function poll_commands()
         mp.osd_message("Watch Together: force synced")
         return
     end
-    apply_remote_state(data.host, false)
+    if data.host then
+        local force = force_next_host_apply
+        force_next_host_apply = false
+        apply_remote_state(data.host, force)
+        if force then
+            mp.osd_message("Watch Together: synced to host")
+        end
+    end
 end
 
 local function force_sync()
@@ -221,10 +249,41 @@ end
 
 mp.add_key_binding("Ctrl+w", "mpv-watch-menu", show_menu)
 
-mp.observe_property("time-pos", "number", function()
-    if applying_remote_seek then
+mp.observe_property("time-pos", "number", function(_, current_time)
+    if not current_time then
         return
     end
+
+    local now = mp.get_time()
+    if applying_remote_seek then
+        last_time_pos = current_time
+        last_time_wall = now
+        return
+    end
+
+    if opts.role == "host" and sync_enabled and opts.auto_force_sync_on_seek == "yes" and last_time_pos and last_time_wall then
+        local elapsed = math.max(0, now - last_time_wall)
+        local expected_time = last_time_pos + elapsed
+        local drift = math.abs(current_time - expected_time)
+        local threshold = tonumber(opts.host_seek_threshold) or 2.5
+        local cooldown = tonumber(opts.host_seek_cooldown) or 1.5
+        if drift >= threshold and now - last_auto_force_sync_at >= cooldown then
+            last_auto_force_sync_at = now
+            force_sync()
+        end
+    elseif opts.role == "guest" and sync_enabled and opts.seek_lock == "yes" and last_host_state then
+        local expected_host_time = projected_time(last_host_state)
+        local threshold = tonumber(opts.seek_lock_threshold) or 3.0
+        if expected_host_time and math.abs(current_time - expected_host_time) >= threshold then
+            applying_remote_seek = true
+            mp.set_property_number("time-pos", expected_host_time)
+            applying_remote_seek = false
+            mp.osd_message("Watch Together: snapped back to host")
+        end
+    end
+
+    last_time_pos = current_time
+    last_time_wall = now
 end)
 
 post_config()

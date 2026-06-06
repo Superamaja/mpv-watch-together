@@ -155,6 +155,10 @@ button:hover {
   background: #15191d;
 }
 
+.guest.is-stale {
+  opacity: 0.72;
+}
+
 .guest strong {
   display: block;
 }
@@ -164,6 +168,14 @@ button:hover {
   color: #9aa6af;
 }
 
+.guest-pills {
+  display: flex;
+  align-items: flex-start;
+  justify-content: flex-end;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+
 .pill {
   align-self: start;
   border-radius: 999px;
@@ -171,6 +183,58 @@ button:hover {
   background: #193626;
   color: #a8f0c6;
   font-size: 12px;
+}
+
+.pill.offline {
+  background: #35242a;
+  color: #ffb4c0;
+}
+
+.pill.buffering,
+.pill.drift-warn {
+  background: #382d18;
+  color: #f5d082;
+}
+
+.pill.drift-bad {
+  background: #421e1e;
+  color: #ffafa3;
+}
+
+.icon-button {
+  width: auto;
+  min-height: 22px;
+  border-radius: 999px;
+  padding: 2px 8px;
+  font-size: 12px;
+  background: #2a2224;
+  border-color: #5a343b;
+  color: #ffb4c0;
+}
+
+.toast-stack {
+  position: fixed;
+  right: 18px;
+  bottom: 18px;
+  display: grid;
+  gap: 8px;
+  z-index: 20;
+}
+
+.toast {
+  max-width: min(320px, calc(100vw - 36px));
+  border: 1px solid #34424a;
+  border-radius: 8px;
+  padding: 10px 12px;
+  background: #151b1f;
+  color: #f5f7f8;
+  box-shadow: 0 12px 32px rgba(0, 0, 0, 0.35);
+  transition: opacity 0.22s ease, transform 0.22s ease;
+}
+
+.toast.is-hiding {
+  opacity: 0;
+  transform: translateY(8px);
 }
 
 @media (max-width: 840px) {

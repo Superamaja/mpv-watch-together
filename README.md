@@ -198,8 +198,19 @@ scripts                            build/test wrappers
 archive/stremio-userscript         old Stremio userscript project
 ```
 
+## Implemented Watch Features
+
+- Explicit sync on/off from mpv.
+- Sync-on-join: guests seek to the host when enabling sync.
+- Guest seek-lock: synced guests snap back if they scrub away.
+- Host auto force-sync after seeking.
+- Host dashboard guest list with online/offline state, buffering, rough drift, and last-seen age.
+- Host removal for stale/offline guests.
+- Guest cleanup on unsync and normal helper shutdown.
+- Host dashboard join/leave toasts and force-sync confirmation.
+
 ## Current Limitations
 
 - The helper currently uses local machine time for `sampledAt`; a later pass should add Firebase server-time calibration for tighter cross-device drift.
-- The guest applies play/pause and explicit force-sync seeks. More aggressive seek-lock behavior can be added after the first real mpv test.
+- Control delegation is not implemented yet.
 - macOS users may need to approve the helper binary in Gatekeeper if it is unsigned.

@@ -1,10 +1,14 @@
 package main
 
 import (
+	"context"
 	"fmt"
 	"log"
 	"net/http"
 	"os"
+	"os/signal"
+	"syscall"
+	"time"
 
 	"mpv-watch-together/helper/internal/config"
 	"mpv-watch-together/helper/internal/server"
@@ -28,7 +32,31 @@ func main() {
 		room = "(waiting for mpv config)"
 	}
 	fmt.Printf("role=%s room=%s user=%s\n", cfg.Role, room, cfg.UserID)
-	if err := http.ListenAndServe(cfg.Addr, app.Handler()); err != nil {
-		log.Fatal(err)
+
+	httpServer := &http.Server{
+		Addr:              cfg.Addr,
+		Handler:           app.Handler(),
+		ReadHeaderTimeout: 5 * time.Second,
+	}
+	errs := make(chan error, 1)
+	go func() {
+		errs <- httpServer.ListenAndServe()
+	}()
+
+	signals := make(chan os.Signal, 1)
+	signal.Notify(signals, os.Interrupt, syscall.SIGTERM)
+
+	select {
+	case err := <-errs:
+		if err != nil && err != http.ErrServerClosed {
+			log.Fatal(err)
+		}
+	case <-signals:
+		fmt.Println("shutting down mpv-watch-helper")
+		ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+		defer cancel()
+		if err := httpServer.Shutdown(ctx); err != nil {
+			log.Fatal(err)
+		}
 	}
 }
