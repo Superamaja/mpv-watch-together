@@ -36,6 +36,19 @@ type Permissions struct {
 	ControllerID string `json:"controllerId"`
 }
 
+type RoomEvent struct {
+	EventID string `json:"eventId"`
+	Type    string `json:"type"`
+	Message string `json:"message"`
+	UserID  string `json:"userId,omitempty"`
+	Level   string `json:"level,omitempty"`
+	At      int64  `json:"at"`
+}
+
+type RoomEvents struct {
+	Latest *RoomEvent `json:"latest,omitempty"`
+}
+
 type Room struct {
 	RoomID      string                      `json:"roomId"`
 	VideoURL    string                      `json:"videoURL,omitempty"`
@@ -43,6 +56,7 @@ type Room struct {
 	Guests      map[string]ParticipantState `json:"guests,omitempty"`
 	Permissions Permissions                 `json:"permissions"`
 	ForceSync   *ForceSync                  `json:"forceSync,omitempty"`
+	Events      RoomEvents                  `json:"events,omitempty"`
 	Status      string                      `json:"status"`
 	UpdatedAt   int64                       `json:"updatedAt"`
 }
@@ -54,6 +68,7 @@ type CommandSnapshot struct {
 	SyncEnabled bool              `json:"syncEnabled"`
 	Host        *ParticipantState `json:"host,omitempty"`
 	ForceSync   *ForceSync        `json:"forceSync,omitempty"`
+	LatestEvent *RoomEvent        `json:"latestEvent,omitempty"`
 	ServerNow   int64             `json:"serverNow"`
 }
 

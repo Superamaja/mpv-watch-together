@@ -19,15 +19,30 @@ import (
 	"mpv-watch-together/helper/web"
 )
 
+const (
+	guestStaleAfter      = 20 * time.Second
+	guestPruneAfter      = 2 * time.Minute
+	stuckBufferingAfter  = 8 * time.Second
+	serverClockPollEvery = 30 * time.Second
+	coordinatorTickEvery = 2 * time.Second
+	hostPresenceGrace    = 20 * time.Second
+)
+
 type App struct {
-	mu           sync.RWMutex
-	cfg          config.Config
-	firebase     *firebase.Client
-	room         protocol.Room
-	syncEnabled  bool
-	lastLocal    protocol.ParticipantState
-	streamCancel context.CancelFunc
-	subscribers  map[chan []byte]struct{}
+	mu                  sync.RWMutex
+	cfg                 config.Config
+	firebase            *firebase.Client
+	room                protocol.Room
+	syncEnabled         bool
+	lastLocal           protocol.ParticipantState
+	serverTimeOffset    int64
+	streamCancel        context.CancelFunc
+	appCtx              context.Context
+	appCancel           context.CancelFunc
+	clockWarningSent    bool
+	subscribers         map[chan []byte]struct{}
+	guestBufferingSince map[string]int64
+	stuckBufferingSent  map[string]bool
 }
 
 type apiError struct {
@@ -39,11 +54,18 @@ func New(cfg config.Config) (*App, error) {
 	if err != nil {
 		return nil, err
 	}
+	appCtx, appCancel := context.WithCancel(context.Background())
 	app := &App{
-		cfg:         cfg,
-		firebase:    fb,
-		subscribers: make(map[chan []byte]struct{}),
+		cfg:                 cfg,
+		firebase:            fb,
+		appCtx:              appCtx,
+		appCancel:           appCancel,
+		subscribers:         make(map[chan []byte]struct{}),
+		guestBufferingSince: make(map[string]int64),
+		stuckBufferingSent:  make(map[string]bool),
 	}
+	go app.monitorServerClock()
+	go app.runCoordinator()
 	if cfg.RoomID != "" {
 		app.startRoomStream()
 	}
@@ -90,17 +112,185 @@ func (a *App) Close() {
 		a.streamCancel = nil
 	}
 	a.mu.Unlock()
+	if a.appCancel != nil {
+		a.appCancel()
+	}
 
 	if cfg.Role == protocol.RoleGuest && cfg.RoomID != "" && cfg.UserID != "" {
-		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
-		defer cancel()
-		_ = a.firebase.Delete(ctx, roomPath(cfg.RoomID)+"/guests/"+cfg.UserID)
+		a.removeGuestParticipant(context.Background(), cfg)
+	}
+}
+
+func (a *App) serverNow() int64 {
+	a.mu.RLock()
+	offset := a.serverTimeOffset
+	a.mu.RUnlock()
+	return protocol.NowMillis() + offset
+}
+
+func (a *App) normalizeParticipant(cfg config.Config, state protocol.ParticipantState, now int64) protocol.ParticipantState {
+	state.UserID = cfg.UserID
+	state.DisplayName = cfg.DisplayName
+	state.SampledAt = now
+	state.LastUpdated = now
+	state.LastSeen = now
+	state.Connected = true
+	state.TimeReliable = true
+	return state
+}
+
+func (a *App) isFreshParticipant(participant *protocol.ParticipantState, now int64, maxAge time.Duration) bool {
+	return participant != nil && participant.LastSeen > 0 && now-participant.LastSeen <= maxAge.Milliseconds()
+}
+
+func (a *App) publishRoomEvent(ctx context.Context, roomID string, eventType string, message string, userID string, level string) {
+	if roomID == "" {
+		return
+	}
+	now := a.serverNow()
+	event := protocol.RoomEvent{
+		EventID: fmt.Sprintf("%s_%d_%06d", eventType, now, rand.Intn(1000000)),
+		Type:    eventType,
+		Message: message,
+		UserID:  userID,
+		Level:   level,
+		At:      now,
+	}
+
+	reqCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
+	defer cancel()
+	if err := a.firebase.Patch(reqCtx, roomPath(roomID)+"/events", map[string]any{"latest": event}, nil); err != nil {
+		slog.Warn("failed to publish room event", "room", roomID, "type", eventType, "error", err)
+		return
+	}
+
+	a.mu.Lock()
+	a.room.Events.Latest = &event
+	a.mu.Unlock()
+	a.publishState()
+}
+
+func (a *App) monitorServerClock() {
+	a.refreshServerClock(a.appCtx)
+	ticker := time.NewTicker(serverClockPollEvery)
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-a.appCtx.Done():
+			return
+		case <-ticker.C:
+			a.refreshServerClock(a.appCtx)
+		}
+	}
+}
+
+func (a *App) refreshServerClock(ctx context.Context) {
+	reqCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
+	defer cancel()
+
+	var offset float64
+	if err := a.firebase.Get(reqCtx, ".info/serverTimeOffset", &offset); err != nil {
+		a.mu.Lock()
+		shouldWarn := !a.clockWarningSent
+		a.clockWarningSent = true
+		a.mu.Unlock()
+		if shouldWarn {
+			slog.Warn("failed to refresh firebase server time offset; falling back to local helper time", "error", err)
+		}
+		return
+	}
+
+	a.mu.Lock()
+	a.serverTimeOffset = int64(offset)
+	a.clockWarningSent = false
+	a.mu.Unlock()
+}
+
+func (a *App) runCoordinator() {
+	ticker := time.NewTicker(coordinatorTickEvery)
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-a.appCtx.Done():
+			return
+		case <-ticker.C:
+			a.runCoordinatorTick()
+		}
+	}
+}
+
+func (a *App) runCoordinatorTick() {
+	now := a.serverNow()
+
+	a.mu.Lock()
+	cfg := a.cfg
+	room := a.room
+	if cfg.Role != protocol.RoleHost || cfg.RoomID == "" {
+		a.mu.Unlock()
+		return
+	}
+
+	pruneIDs := make([]string, 0)
+	events := make([]protocol.RoomEvent, 0)
+	for guestID, guest := range room.Guests {
+		ageMs := now - guest.LastSeen
+		if guest.LastSeen > 0 && ageMs > guestPruneAfter.Milliseconds() {
+			pruneIDs = append(pruneIDs, guestID)
+			delete(a.guestBufferingSince, guestID)
+			delete(a.stuckBufferingSent, guestID)
+			continue
+		}
+
+		stale := guest.LastSeen <= 0 || ageMs > guestStaleAfter.Milliseconds()
+		if stale || !guest.IsBuffering {
+			delete(a.guestBufferingSince, guestID)
+			delete(a.stuckBufferingSent, guestID)
+			continue
+		}
+
+		if _, ok := a.guestBufferingSince[guestID]; !ok {
+			a.guestBufferingSince[guestID] = now
+			events = append(events, protocol.RoomEvent{
+				Type:    "guest_buffering",
+				Message: guest.DisplayName + " is buffering",
+				UserID:  guestID,
+				Level:   "warning",
+			})
+		}
+		if !a.stuckBufferingSent[guestID] && now-a.guestBufferingSince[guestID] >= stuckBufferingAfter.Milliseconds() {
+			a.stuckBufferingSent[guestID] = true
+			events = append(events, protocol.RoomEvent{
+				Type:    "guest_stuck_buffering",
+				Message: guest.DisplayName + " is still buffering",
+				UserID:  guestID,
+				Level:   "warning",
+			})
+		}
+	}
+	a.mu.Unlock()
+
+	for _, guestID := range pruneIDs {
+		reqCtx, cancel := context.WithTimeout(a.appCtx, 5*time.Second)
+		err := a.firebase.Delete(reqCtx, roomPath(cfg.RoomID)+"/guests/"+guestID)
+		cancel()
+		if err != nil {
+			slog.Warn("failed to prune stale guest", "room", cfg.RoomID, "user", guestID, "error", err)
+			continue
+		}
+		a.publishRoomEvent(a.appCtx, cfg.RoomID, "guest_pruned", "Removed offline guest", guestID, "info")
+	}
+
+	for _, event := range events {
+		a.publishRoomEvent(a.appCtx, cfg.RoomID, event.Type, event.Message, event.UserID, event.Level)
 	}
 }
 
 func (a *App) handleGetConfig(w http.ResponseWriter, r *http.Request) {
 	a.mu.RLock()
 	defer a.mu.RUnlock()
+	serverNow := protocol.NowMillis() + a.serverTimeOffset
 	writeJSON(w, http.StatusOK, map[string]any{
 		"addr":        a.cfg.Addr,
 		"role":        a.cfg.Role,
@@ -108,6 +298,7 @@ func (a *App) handleGetConfig(w http.ResponseWriter, r *http.Request) {
 		"displayName": a.cfg.DisplayName,
 		"userId":      a.cfg.UserID,
 		"syncEnabled": a.syncEnabled,
+		"serverNow":   serverNow,
 		"room":        a.room,
 	})
 }
@@ -163,14 +354,8 @@ func (a *App) updateParticipantConfig(ctx context.Context, cfg config.Config, st
 	reqCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
 	defer cancel()
 
-	now := protocol.NowMillis()
-	state.UserID = cfg.UserID
-	state.DisplayName = cfg.DisplayName
-	state.SampledAt = now
-	state.LastUpdated = now
-	state.LastSeen = now
-	state.Connected = true
-	state.TimeReliable = true
+	now := a.serverNow()
+	state = a.normalizeParticipant(cfg, state, now)
 
 	if cfg.Role == protocol.RoleHost {
 		patch := map[string]any{
@@ -204,14 +389,8 @@ func (a *App) handlePostMPVState(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	now := protocol.NowMillis()
-	state.UserID = cfg.UserID
-	state.DisplayName = cfg.DisplayName
-	state.SampledAt = now
-	state.LastUpdated = now
-	state.LastSeen = now
-	state.Connected = true
-	state.TimeReliable = true
+	now := a.serverNow()
+	state = a.normalizeParticipant(cfg, state, now)
 
 	a.mu.Lock()
 	a.lastLocal = state
@@ -246,6 +425,7 @@ func (a *App) handlePostMPVState(w http.ResponseWriter, r *http.Request) {
 func (a *App) handleGetMPVCommands(w http.ResponseWriter, r *http.Request) {
 	a.mu.RLock()
 	defer a.mu.RUnlock()
+	serverNow := protocol.NowMillis() + a.serverTimeOffset
 	writeJSON(w, http.StatusOK, protocol.CommandSnapshot{
 		Role:        a.cfg.Role,
 		UserID:      a.cfg.UserID,
@@ -253,7 +433,8 @@ func (a *App) handleGetMPVCommands(w http.ResponseWriter, r *http.Request) {
 		SyncEnabled: a.syncEnabled,
 		Host:        a.room.Host,
 		ForceSync:   a.room.ForceSync,
-		ServerNow:   protocol.NowMillis(),
+		LatestEvent: a.room.Events.Latest,
+		ServerNow:   serverNow,
 	})
 }
 
@@ -269,15 +450,40 @@ func (a *App) handlePostSync(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	a.mu.Lock()
-	a.syncEnabled = *req.Enabled
+	now := a.serverNow()
+	a.mu.RLock()
 	cfg := a.cfg
+	a.mu.RUnlock()
+	if *req.Enabled && cfg.Role == protocol.RoleGuest && cfg.RoomID != "" {
+		a.refreshRoom(r.Context(), cfg.RoomID)
+		now = a.serverNow()
+	}
+
+	a.mu.Lock()
+	cfg = a.cfg
+	if *req.Enabled && cfg.Role == protocol.RoleGuest {
+		room := a.room
+		if !a.isFreshParticipant(room.Host, now, hostPresenceGrace) {
+			a.mu.Unlock()
+			writeJSON(w, http.StatusConflict, apiError{Error: "no host found in room"})
+			return
+		}
+	}
+	a.syncEnabled = *req.Enabled
 	a.mu.Unlock()
 
 	if !*req.Enabled && cfg.Role == protocol.RoleGuest && cfg.RoomID != "" {
-		ctx, cancel := context.WithTimeout(r.Context(), 5*time.Second)
-		defer cancel()
-		_ = a.firebase.Delete(ctx, roomPath(cfg.RoomID)+"/guests/"+cfg.UserID)
+		a.removeGuestParticipant(r.Context(), cfg)
+		a.publishRoomEvent(context.Background(), cfg.RoomID, "guest_left", cfg.DisplayName+" left", cfg.UserID, "info")
+	} else if !*req.Enabled && cfg.Role == protocol.RoleHost && cfg.RoomID != "" {
+		a.removeHostParticipant(r.Context(), cfg, now)
+		a.publishRoomEvent(context.Background(), cfg.RoomID, "host_left", cfg.DisplayName+" stopped hosting", cfg.UserID, "warning")
+	} else if *req.Enabled {
+		if cfg.Role == protocol.RoleGuest {
+			a.publishRoomEvent(context.Background(), cfg.RoomID, "guest_synced", cfg.DisplayName+" synced", cfg.UserID, "success")
+		} else if cfg.Role == protocol.RoleHost {
+			a.publishRoomEvent(context.Background(), cfg.RoomID, "host_synced", cfg.DisplayName+" started hosting", cfg.UserID, "success")
+		}
 	}
 
 	writeJSON(w, http.StatusOK, map[string]bool{"ok": true})
@@ -304,17 +510,11 @@ func (a *App) handlePostForceSync(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	now := protocol.NowMillis()
+	now := a.serverNow()
 	sourceState := lastLocal
 	if hasStateOverride {
 		sourceState = stateOverride
-		sourceState.UserID = cfg.UserID
-		sourceState.DisplayName = cfg.DisplayName
-		sourceState.SampledAt = now
-		sourceState.LastUpdated = now
-		sourceState.LastSeen = now
-		sourceState.Connected = true
-		sourceState.TimeReliable = true
+		sourceState = a.normalizeParticipant(cfg, sourceState, now)
 
 		a.mu.Lock()
 		a.lastLocal = sourceState
@@ -351,6 +551,17 @@ func (a *App) handlePostForceSync(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusBadGateway, apiError{Error: err.Error()})
 		return
 	}
+	guestCount := 0
+	nowForGuests := now
+	a.mu.RLock()
+	for index := range a.room.Guests {
+		guest := a.room.Guests[index]
+		if a.isFreshParticipant(&guest, nowForGuests, guestStaleAfter) {
+			guestCount++
+		}
+	}
+	a.mu.RUnlock()
+	a.publishRoomEvent(context.Background(), cfg.RoomID, "force_sync", fmt.Sprintf("Force sync sent to %d guests", guestCount), cfg.UserID, "success")
 	writeJSON(w, http.StatusOK, force)
 }
 
@@ -407,6 +618,7 @@ func (a *App) handleDeleteGuest(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusBadGateway, apiError{Error: err.Error()})
 		return
 	}
+	a.publishRoomEvent(context.Background(), cfg.RoomID, "guest_pruned", "Removed offline guest", userID, "info")
 	writeJSON(w, http.StatusOK, map[string]bool{"ok": true})
 }
 
@@ -494,20 +706,55 @@ func (a *App) refreshRoom(ctx context.Context, roomID string) {
 	if room.Guests == nil {
 		room.Guests = map[string]protocol.ParticipantState{}
 	}
+	now := a.serverNow()
+	var cleanupGuest config.Config
 	a.mu.Lock()
+	cfg := a.cfg
 	a.room = room
+	if cfg.Role == protocol.RoleGuest && cfg.RoomID == roomID && a.syncEnabled && !a.isFreshParticipant(room.Host, now, hostPresenceGrace) {
+		a.syncEnabled = false
+		cleanupGuest = cfg
+	}
 	a.mu.Unlock()
+
+	if cleanupGuest.RoomID != "" && cleanupGuest.UserID != "" {
+		go a.removeGuestParticipant(context.Background(), cleanupGuest)
+	}
 	a.publishState()
+}
+
+func (a *App) removeGuestParticipant(ctx context.Context, cfg config.Config) {
+	reqCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
+	defer cancel()
+	if err := a.firebase.Delete(reqCtx, roomPath(cfg.RoomID)+"/guests/"+cfg.UserID); err != nil {
+		slog.Warn("failed to remove guest participant", "room", cfg.RoomID, "user", cfg.UserID, "error", err)
+	}
+}
+
+func (a *App) removeHostParticipant(ctx context.Context, cfg config.Config, now int64) {
+	reqCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
+	defer cancel()
+	if err := a.firebase.Delete(reqCtx, roomPath(cfg.RoomID)+"/host"); err != nil {
+		slog.Warn("failed to remove host participant", "room", cfg.RoomID, "user", cfg.UserID, "error", err)
+	}
+	if err := a.firebase.Patch(reqCtx, roomPath(cfg.RoomID), map[string]any{
+		"status":    "inactive",
+		"updatedAt": now,
+	}, nil); err != nil {
+		slog.Warn("failed to mark room inactive", "room", cfg.RoomID, "error", err)
+	}
 }
 
 func (a *App) publishState() {
 	a.mu.RLock()
+	serverNow := protocol.NowMillis() + a.serverTimeOffset
 	payload, err := json.Marshal(map[string]any{
 		"role":        a.cfg.Role,
 		"roomId":      a.cfg.RoomID,
 		"displayName": a.cfg.DisplayName,
 		"userId":      a.cfg.UserID,
 		"syncEnabled": a.syncEnabled,
+		"serverNow":   serverNow,
 		"room":        a.room,
 	})
 	subscribers := make([]chan []byte, 0, len(a.subscribers))
@@ -528,12 +775,14 @@ func (a *App) publishState() {
 
 func (a *App) writeEvent(w http.ResponseWriter, flusher http.Flusher) {
 	a.mu.RLock()
+	serverNow := protocol.NowMillis() + a.serverTimeOffset
 	payload, _ := json.Marshal(map[string]any{
 		"role":        a.cfg.Role,
 		"roomId":      a.cfg.RoomID,
 		"displayName": a.cfg.DisplayName,
 		"userId":      a.cfg.UserID,
 		"syncEnabled": a.syncEnabled,
+		"serverNow":   serverNow,
 		"room":        a.room,
 	})
 	a.mu.RUnlock()
@@ -560,7 +809,7 @@ func withCORS(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Access-Control-Allow-Origin", "http://127.0.0.1:8765")
 		w.Header().Set("Access-Control-Allow-Headers", "Content-Type")
-		w.Header().Set("Access-Control-Allow-Methods", "GET,POST,OPTIONS")
+		w.Header().Set("Access-Control-Allow-Methods", "GET,POST,DELETE,OPTIONS")
 		if r.Method == http.MethodOptions {
 			w.WriteHeader(http.StatusNoContent)
 			return

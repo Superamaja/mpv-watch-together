@@ -24,6 +24,9 @@ options.read_options(opts, "mpv-watch")
 
 local sync_enabled = opts.sync_on_start == "yes"
 local last_force_sync_id = nil
+local last_event_id = nil
+local last_server_now = nil
+local last_server_wall = nil
 local applying_remote_seek = false
 local force_next_host_apply = false
 local last_host_state = nil
@@ -31,6 +34,7 @@ local last_time_pos = nil
 local last_time_wall = nil
 local last_auto_force_sync_at = 0
 local host_found_notified = false
+local helper_connected = true
 local poll_commands = nil
 local set_sync = nil
 local send_state = nil
@@ -45,11 +49,13 @@ end
 local function request(method, path, body)
     local args = {
         "curl",
-        "-fsS",
+        "-sS",
         "-X",
         method,
         "-H",
         "Content-Type: application/json",
+        "-w",
+        "\n%{http_code}",
     }
     if body ~= nil then
         args[#args + 1] = "--data"
@@ -65,10 +71,29 @@ local function request(method, path, body)
     if result.status ~= 0 then
         return nil, result.error or result.stderr or "request failed"
     end
-    if result.stdout == "" then
+    local body, status_text = result.stdout:match("^(.*)\n(%d%d%d)%s*$")
+    local status = tonumber(status_text or "")
+    if not status then
+        body = result.stdout
+        status = 200
+    end
+
+    if body == "" then
+        if status >= 400 then
+            return nil, "request failed with HTTP " .. status
+        end
         return {}, nil
     end
-    return utils.parse_json(result.stdout), nil
+
+    local parsed = utils.parse_json(body)
+    if status >= 400 then
+        local message = "request failed with HTTP " .. status
+        if type(parsed) == "table" and parsed.error then
+            message = parsed.error
+        end
+        return nil, message
+    end
+    return parsed, nil
 end
 
 local function post_config()
@@ -86,13 +111,18 @@ local function post_config()
 end
 
 set_sync = function(enabled)
-    sync_enabled = enabled
     local _, err = request("POST", "/api/sync", { enabled = enabled })
     if err then
-        mp.osd_message("Watch Together: helper unavailable")
+        sync_enabled = false
+        if enabled and err == "no host found in room" then
+            mp.osd_message("Watch Together: no host found in room")
+        else
+            mp.osd_message("Watch Together: helper unavailable")
+        end
         msg.warn("Failed to set sync: " .. err)
         return
     end
+    sync_enabled = enabled
     mp.osd_message(enabled and "Watch Together: sync on" or "Watch Together: sync off")
     if enabled and opts.role == "guest" then
         force_next_host_apply = true
@@ -150,6 +180,13 @@ local function playback_state()
     }
 end
 
+local function current_server_millis()
+    if type(last_server_now) == "number" and type(last_server_wall) == "number" then
+        return last_server_now + math.max(0, mp.get_time() - last_server_wall) * 1000
+    end
+    return os.time() * 1000
+end
+
 send_state = function()
     if not sync_enabled then
         return
@@ -167,7 +204,7 @@ local function projected_time(state)
     if not state.isPlaying or state.isBuffering or type(state.sampledAt) ~= "number" then
         return state.currentTime
     end
-    local elapsed = math.max(0, (os.time() * 1000 - state.sampledAt) / 1000)
+    local elapsed = math.max(0, (current_server_millis() - state.sampledAt) / 1000)
     return state.currentTime + elapsed
 end
 
@@ -200,10 +237,36 @@ end
 poll_commands = function()
     local data, err = request("GET", "/api/mpv/commands")
     if err or not data then
+        if helper_connected then
+            helper_connected = false
+            mp.osd_message("Watch Together: connection lost, reconnecting")
+        end
         return
     end
+    if not helper_connected then
+        helper_connected = true
+        mp.osd_message("Watch Together: reconnected")
+    end
+    if type(data.serverNow) == "number" then
+        last_server_now = data.serverNow
+        last_server_wall = mp.get_time()
+    end
+    if data.latestEvent and data.latestEvent.eventId and data.latestEvent.eventId ~= last_event_id then
+        last_event_id = data.latestEvent.eventId
+        if data.latestEvent.userId ~= data.userId and data.latestEvent.message then
+            mp.osd_message("Watch Together: " .. data.latestEvent.message)
+        end
+        if opts.role == "host" and data.latestEvent.type == "guest_buffering" then
+            mp.set_property_bool("pause", true)
+        end
+    end
     if data.syncEnabled ~= nil then
+        local was_sync_enabled = sync_enabled
         sync_enabled = data.syncEnabled
+        if was_sync_enabled and not sync_enabled and opts.role == "guest" then
+            host_found_notified = false
+            mp.osd_message("Watch Together: no host found in room")
+        end
     end
     if data.forceSync and data.forceSync.syncId and data.forceSync.syncId ~= last_force_sync_id then
         last_force_sync_id = data.forceSync.syncId

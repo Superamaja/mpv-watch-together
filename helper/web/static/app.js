@@ -18,6 +18,8 @@ const DRIFT_AMBER_S = 3;
 let state = { syncEnabled: false, room: {} };
 let previousGuests = new Map();
 let hasGuestSnapshot = false;
+let stateReceivedAt = Date.now();
+let lastRoomEventId = null;
 
 async function api(path, options = {}) {
   const response = await fetch(path, {
@@ -37,6 +39,8 @@ function setStatus(text, ok = true) {
 function render(next) {
   notifyGuestChanges(state.room?.guests || {}, next.room?.guests || {});
   state = next;
+  stateReceivedAt = Date.now();
+  notifyRoomEvent(state.room?.events?.latest);
   els.role.value = state.role || "guest";
   els.roomId.value = state.roomId || "";
   els.displayName.value = state.displayName || "";
@@ -51,6 +55,7 @@ function render(next) {
         State: host.isBuffering ? "Buffering" : host.isPlaying ? "Playing" : "Paused",
         Time: formatSeconds(host.currentTime),
         Duration: formatSeconds(host.duration),
+        "Last sync": formatWallTime(state.room?.forceSync?.issuedAt),
         "Last seen": formatAge(host.lastSeen),
       })
     : `<dt>Status</dt><dd>No host state yet</dd>`;
@@ -99,7 +104,7 @@ function projectedTime(stateLike) {
   if (!stateLike.isPlaying || stateLike.isBuffering || !Number.isFinite(stateLike.sampledAt)) {
     return stateLike.currentTime;
   }
-  return stateLike.currentTime + Math.max(0, (Date.now() - stateLike.sampledAt) / 1000);
+  return stateLike.currentTime + Math.max(0, (nowMs() - stateLike.sampledAt) / 1000);
 }
 
 function driftInfo(guest, host) {
@@ -120,7 +125,12 @@ function signedSeconds(value) {
 }
 
 function isStale(guest) {
-  return !guest?.lastSeen || Date.now() - guest.lastSeen > STALE_MS;
+  return !guest?.lastSeen || nowMs() - guest.lastSeen > STALE_MS;
+}
+
+function nowMs() {
+  if (!Number.isFinite(state.serverNow)) return Date.now();
+  return state.serverNow + (Date.now() - stateReceivedAt);
 }
 
 function notifyGuestChanges(_previous, next) {
@@ -141,6 +151,14 @@ function notifyGuestChanges(_previous, next) {
     }
   }
   previousGuests = nextMap;
+}
+
+function notifyRoomEvent(event) {
+  if (!event?.eventId || event.eventId === lastRoomEventId) return;
+  lastRoomEventId = event.eventId;
+  if (event.userId === state.userId) return;
+  if (event.type === "guest_synced" || event.type === "guest_left") return;
+  if (event.message) showToast(event.message);
 }
 
 function showToast(message) {
@@ -170,8 +188,17 @@ function formatSeconds(value) {
 
 function formatAge(value) {
   if (!Number.isFinite(value) || value <= 0) return "never";
-  const seconds = Math.max(0, Math.round((Date.now() - value) / 1000));
+  const seconds = Math.max(0, Math.round((nowMs() - value) / 1000));
   return `${seconds}s ago`;
+}
+
+function formatWallTime(value) {
+  if (!Number.isFinite(value) || value <= 0) return "never";
+  return new Date(value).toLocaleTimeString([], {
+    hour: "2-digit",
+    minute: "2-digit",
+    second: "2-digit",
+  });
 }
 
 function escapeHTML(value) {

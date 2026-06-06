@@ -205,17 +205,21 @@ archive/stremio-userscript         old Stremio userscript project
 ## Implemented Watch Features
 
 - Explicit sync on/off from mpv.
+- Guests stay invisible until they turn sync on.
+- Guests cannot turn sync on unless a fresh host is present in the room.
 - Sync-on-join: guests seek to the host when enabling sync.
 - Guest OSD notification when a host is found after syncing.
 - Guest seek-lock: synced guests snap back if they scrub away.
 - Host auto force-sync after seeking.
-- Host dashboard guest list with online/offline state, buffering, rough drift, and last-seen age.
-- Host removal for stale/offline guests.
-- Guest cleanup on unsync and normal helper shutdown.
-- Host dashboard join/leave toasts and force-sync confirmation.
+- Host mpv auto-pauses when a synced guest starts buffering.
+- Firebase server-time calibration for timestamping, projection, and drift display.
+- Host dashboard guest list with online/offline state, buffering, drift, last sync time, and last-seen age.
+- Toast/OSD notifications for join, leave, force sync, connection loss/restored, guest buffering, and stale guest removal.
+- Synced participant cleanup: guests are deleted on unsync, normal helper shutdown, host-loss auto-unsync, and host-side stale pruning.
+- Host removal for stale/offline guests from the dashboard.
+- Guest helpers intentionally do not serve the browser dashboard.
 
 ## Current Limitations
 
-- The helper currently uses local machine time for `sampledAt`; a later pass should add Firebase server-time calibration for tighter cross-device drift.
-- Control delegation is not implemented yet.
+- Control delegation is intentionally not implemented; host remains the only controller.
 - macOS users may need to approve the helper binary in Gatekeeper if it is unsigned.
