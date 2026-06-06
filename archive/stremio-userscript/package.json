@@ -1,0 +1,16 @@
+{
+  "name": "stremio-watch-together",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "build": "node scripts/build-userscripts.mjs",
+    "lint": "eslint .",
+    "check": "pnpm run lint && pnpm run build"
+  },
+  "devDependencies": {
+    "@eslint/js": "^9.28.0",
+    "eslint": "^9.28.0",
+    "globals": "^16.2.0",
+    "lucide-static": "^1.17.0"
+  }
+}

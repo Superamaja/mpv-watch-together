@@ -1,0 +1,21 @@
+# Secrets and local config
+.env
+.env.*
+!.env.example
+.claude/settings.local.json
+
+# JavaScript package/cache output
+/node_modules/
+/.pnpm-store/
+/dist/
+
+# Go build/test output
+/.gocache/
+/bin/
+*.test
+coverage.out
+
+# OS/editor noise
+.DS_Store
+Thumbs.db
+*.swp

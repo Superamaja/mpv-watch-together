@@ -1,0 +1,53 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>mpv Watch Together</title>
+    <link rel="stylesheet" href="/styles.css" />
+  </head>
+  <body>
+    <main class="shell">
+      <section class="topbar">
+        <div>
+          <h1>mpv Watch Together</h1>
+          <p id="subtitle">Local host dashboard</p>
+        </div>
+        <div class="status" id="connectionStatus">Connecting</div>
+      </section>
+
+      <section class="controls">
+        <label>
+          <span>Role</span>
+          <select id="role">
+            <option value="host">Host</option>
+            <option value="guest">Guest</option>
+          </select>
+        </label>
+        <label>
+          <span>Room</span>
+          <input id="roomId" placeholder="room123" />
+        </label>
+        <label>
+          <span>Display name</span>
+          <input id="displayName" placeholder="Movie night" />
+        </label>
+        <button id="saveConfig">Save</button>
+        <button id="toggleSync">Sync Off</button>
+        <button id="forceSync">Force Sync</button>
+      </section>
+
+      <section class="grid">
+        <article class="panel">
+          <h2>Host</h2>
+          <dl id="hostState" class="facts"></dl>
+        </article>
+        <article class="panel">
+          <h2>Guests</h2>
+          <div id="guestList" class="guest-list"></div>
+        </article>
+      </section>
+    </main>
+    <script src="/app.js"></script>
+  </body>
+</html>
