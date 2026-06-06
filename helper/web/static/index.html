@@ -4,46 +4,89 @@
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>mpv Watch Together</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap"
+      rel="stylesheet"
+    />
     <link rel="stylesheet" href="/styles.css" />
   </head>
   <body>
     <main class="shell">
-      <section class="topbar">
-        <div>
-          <h1>mpv Watch Together</h1>
-          <p id="subtitle">Local host dashboard</p>
+      <header class="topbar">
+        <div class="brand">
+          <span class="brand-mark" aria-hidden="true">
+            <svg viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+              <circle cx="12" cy="12" r="10" stroke="currentColor" stroke-width="1.6" opacity="0.5" />
+              <path d="M10 8.5l5 3.5-5 3.5z" fill="currentColor" />
+            </svg>
+          </span>
+          <div class="brand-text">
+            <h1>mpv Watch Together</h1>
+            <p id="subtitle">Local host dashboard</p>
+          </div>
         </div>
-        <div class="status" id="connectionStatus">Connecting</div>
-      </section>
+        <div class="status" id="connectionStatus" role="status" aria-live="polite">
+          <span class="status-dot" aria-hidden="true"></span>
+          <span class="status-text" id="statusText">Connecting</span>
+        </div>
+      </header>
 
-      <section class="controls">
-        <label>
-          <span>Role</span>
-          <select id="role">
-            <option value="host">Host</option>
-            <option value="guest">Guest</option>
-          </select>
-        </label>
-        <label>
-          <span>Room</span>
-          <input id="roomId" placeholder="room123" />
-        </label>
-        <label>
-          <span>Display name</span>
-          <input id="displayName" placeholder="Movie night" />
-        </label>
-        <button id="saveConfig">Save</button>
-        <button id="toggleSync">Sync Off</button>
-        <button id="forceSync">Force Sync</button>
+      <section class="controls panel">
+        <div class="field-group">
+          <label class="field">
+            <span>Role</span>
+            <select id="role">
+              <option value="host">Host</option>
+              <option value="guest">Guest</option>
+            </select>
+          </label>
+          <label class="field">
+            <span>Room</span>
+            <input id="roomId" placeholder="room123" />
+          </label>
+          <label class="field">
+            <span>Display name</span>
+            <input id="displayName" placeholder="Movie night" />
+          </label>
+        </div>
+        <div class="actions">
+          <button id="saveConfig" class="btn btn-ghost" type="button">Save</button>
+          <button id="toggleSync" class="btn btn-toggle" type="button" aria-pressed="false">
+            <span class="btn-toggle-dot" aria-hidden="true"></span>
+            <span class="btn-toggle-label">Sync Off</span>
+          </button>
+          <button id="forceSync" class="btn btn-accent" type="button">Force Sync</button>
+        </div>
       </section>
 
       <section class="grid">
-        <article class="panel">
-          <h2>Host</h2>
-          <dl id="hostState" class="facts"></dl>
+        <article class="panel host-panel">
+          <h2 class="panel-title">
+            <span class="panel-title-icon" aria-hidden="true">
+              <svg viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+                <path d="M8 6.5l9 5.5-9 5.5z" fill="currentColor" />
+              </svg>
+            </span>
+            Now Playing
+          </h2>
+          <div id="hostState" class="host-state"></div>
         </article>
         <article class="panel">
-          <h2 id="guestHeading">Guests</h2>
+          <h2 class="panel-title" id="guestHeading">
+            <span class="panel-title-icon" aria-hidden="true">
+              <svg viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+                <path
+                  d="M9 11a3 3 0 100-6 3 3 0 000 6zM3 19a6 6 0 0112 0M16.5 11a3 3 0 10-2-5.2M21 19a6 6 0 00-4.5-5.8"
+                  stroke="currentColor"
+                  stroke-width="1.6"
+                  stroke-linecap="round"
+                />
+              </svg>
+            </span>
+            <span id="guestHeadingText">Guests</span>
+          </h2>
           <div id="guestList" class="guest-list"></div>
         </article>
       </section>

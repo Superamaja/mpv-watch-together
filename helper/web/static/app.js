@@ -1,13 +1,16 @@
 const els = {
   status: document.querySelector("#connectionStatus"),
+  statusText: document.querySelector("#statusText"),
   subtitle: document.querySelector("#subtitle"),
   role: document.querySelector("#role"),
   roomId: document.querySelector("#roomId"),
   displayName: document.querySelector("#displayName"),
   saveConfig: document.querySelector("#saveConfig"),
   toggleSync: document.querySelector("#toggleSync"),
+  toggleSyncLabel: document.querySelector("#toggleSync .btn-toggle-label"),
   forceSync: document.querySelector("#forceSync"),
   hostState: document.querySelector("#hostState"),
+  guestHeadingText: document.querySelector("#guestHeadingText"),
   guestList: document.querySelector("#guestList"),
 };
 
@@ -33,8 +36,8 @@ async function api(path, options = {}) {
 }
 
 function setStatus(text, ok = true) {
-  els.status.textContent = text;
-  els.status.style.color = ok ? "#a8f0c6" : "#ffb4a8";
+  els.statusText.textContent = text;
+  els.status.classList.toggle("is-error", !ok);
 }
 
 function render(next) {
@@ -46,37 +49,48 @@ function render(next) {
   els.roomId.value = state.roomId || "";
   els.displayName.value = state.displayName || "";
   els.subtitle.textContent = state.roomId ? `Room ${state.roomId}` : "Choose a room to begin";
-  els.toggleSync.textContent = state.syncEnabled ? "Sync On" : "Sync Off";
+  if (els.toggleSyncLabel) els.toggleSyncLabel.textContent = state.syncEnabled ? "Sync On" : "Sync Off";
+  els.toggleSync.classList.toggle("is-on", !!state.syncEnabled);
+  els.toggleSync.setAttribute("aria-pressed", String(!!state.syncEnabled));
   els.forceSync.disabled = state.role !== "host" || !state.syncEnabled;
 
   const host = state.room?.host;
-  els.hostState.innerHTML = host
-    ? facts({
-        Name: host.displayName,
-        State: host.isBuffering ? "Buffering" : host.isPlaying ? "Playing" : "Paused",
-        Time: formatSeconds(host.currentTime),
-        Duration: formatSeconds(host.duration),
-        "Last sync": formatWallTime(state.room?.forceSync?.issuedAt),
-        "Last seen": formatAge(host.lastSeen),
-      })
-    : `<dt>Status</dt><dd>No host state yet</dd>`;
+  els.hostState.innerHTML = host ? hostCard(host) : `<div class="empty">No host state yet.</div>`;
 
   const guests = Object.entries(state.room?.guests || {});
   const onlineCount = guests.filter(([, guest]) => !isStale(guest)).length;
   const offlineCount = guests.length - onlineCount;
-  const guestHeading = document.querySelector("#guestHeading");
-  if (guestHeading) {
-    guestHeading.textContent = `Guests | ${onlineCount} online | ${offlineCount} offline`;
+  if (els.guestHeadingText) {
+    els.guestHeadingText.textContent = `Guests · ${onlineCount} online · ${offlineCount} offline`;
   }
   els.guestList.innerHTML = guests.length
     ? guests.map(([userId, guest]) => guestRow(userId, guest, state.room?.host)).join("")
     : `<div class="empty">No synced guests yet.</div>`;
 }
 
-function facts(items) {
-  return Object.entries(items)
-    .map(([key, value]) => `<dt>${escapeHTML(key)}</dt><dd>${escapeHTML(String(value))}</dd>`)
-    .join("");
+function hostCard(host) {
+  const stateText = host.isBuffering ? "Buffering" : host.isPlaying ? "Playing" : "Paused";
+  const stateClass = host.isBuffering ? "is-buffering" : host.isPlaying ? "is-playing" : "is-paused";
+  const duration = Number.isFinite(host.duration) ? host.duration : 0;
+  const current = Number.isFinite(host.currentTime) ? host.currentTime : 0;
+  const pct = duration > 0 ? Math.min(100, Math.max(0, (current / duration) * 100)) : 0;
+  return `
+    <div class="np-head">
+      <span class="np-name">${escapeHTML(host.displayName || "Host")}</span>
+      <span class="state-badge ${stateClass}">${escapeHTML(stateText)}</span>
+    </div>
+    <div>
+      <div class="np-time">
+        <span class="np-current">${escapeHTML(formatSeconds(current))}</span>
+        <span class="np-duration">/ ${escapeHTML(formatSeconds(duration))}</span>
+      </div>
+      <div class="progress"><div class="progress-fill" style="width:${pct}%"></div></div>
+    </div>
+    <dl class="facts">
+      <dt>Last sync</dt><dd>${escapeHTML(formatWallTime(state.room?.forceSync?.issuedAt))}</dd>
+      <dt>Last seen</dt><dd>${escapeHTML(formatAge(host.lastSeen))}</dd>
+    </dl>
+  `;
 }
 
 function guestRow(userId, guest, host) {
@@ -84,11 +98,15 @@ function guestRow(userId, guest, host) {
   const stale = isStale(guest);
   const drift = driftInfo(guest, host);
   const canRemove = state.role === "host" && stale;
+  const name = guest.displayName || guest.userId;
   return `
     <div class="guest ${stale ? "is-stale" : ""}">
-      <div>
-        <strong>${escapeHTML(guest.displayName || guest.userId)}</strong>
-        <span>${escapeHTML(stateText)} | ${escapeHTML(formatSeconds(guest.currentTime))} | ${escapeHTML(formatAge(guest.lastSeen))}</span>
+      <div class="guest-main">
+        <div class="avatar ${stale ? "is-offline" : "is-online"}">${escapeHTML(initials(name))}</div>
+        <div class="guest-info">
+          <strong title="${escapeHTML(name)}">${escapeHTML(name)}</strong>
+          <span class="guest-sub">${escapeHTML(stateText)} · ${escapeHTML(formatSeconds(guest.currentTime))} · ${escapeHTML(formatAge(guest.lastSeen))}</span>
+        </div>
       </div>
       <div class="guest-pills">
         <div class="pill ${stale ? "offline" : "online"}">${stale ? "offline" : "online"}</div>
@@ -98,6 +116,13 @@ function guestRow(userId, guest, host) {
       </div>
     </div>
   `;
+}
+
+function initials(name) {
+  const parts = String(name).trim().split(/\s+/).filter(Boolean);
+  if (parts.length === 0) return "?";
+  if (parts.length === 1) return parts[0].slice(0, 2).toUpperCase();
+  return (parts[0][0] + parts[parts.length - 1][0]).toUpperCase();
 }
 
 function projectedTime(stateLike) {
