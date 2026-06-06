@@ -93,11 +93,25 @@ local function set_sync(enabled)
     end
 end
 
+local function is_buffering()
+    if mp.get_property_bool("paused-for-cache", false) then
+        return true
+    end
+
+    local buffering_state = mp.get_property_number("cache-buffering-state", -1)
+    if buffering_state >= 0 and buffering_state < 100 then
+        return true
+    end
+
+    local cache_state = mp.get_property_native("demuxer-cache-state")
+    return type(cache_state) == "table" and cache_state.underrun == true
+end
+
 local function playback_state()
     return {
         currentTime = mp.get_property_number("time-pos", 0),
         isPlaying = not mp.get_property_bool("pause", true),
-        isBuffering = mp.get_property_bool("paused-for-cache", false),
+        isBuffering = is_buffering(),
         duration = mp.get_property_number("duration", 0),
     }
 end
