@@ -10,7 +10,6 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
-	"runtime"
 	"strings"
 )
 
@@ -118,24 +117,18 @@ func writeBundle(outDir string, target target, role string, displayName string, 
 	if err := safeRemove(bundleDir); err != nil {
 		return "", err
 	}
-	scriptsDir := filepath.Join(bundleDir, "mpv", "scripts")
-	optsDir := filepath.Join(bundleDir, "mpv", "script-opts")
-	helperDir := filepath.Join(bundleDir, "helper")
-
-	for _, dir := range []string{scriptsDir, optsDir, helperDir} {
-		if err := os.MkdirAll(dir, 0o755); err != nil {
-			return "", err
-		}
+	if err := os.MkdirAll(bundleDir, 0o755); err != nil {
+		return "", err
 	}
 
 	binaryName := filepath.Base(binaryPath)
-	if err := copyFile(binaryPath, filepath.Join(helperDir, binaryName), 0o755); err != nil {
+	if err := copyFile(binaryPath, filepath.Join(bundleDir, binaryName), 0o755); err != nil {
 		return "", err
 	}
-	if err := copyFile(filepath.Join("clients", "mpv", "mpv-watch.lua"), filepath.Join(scriptsDir, "mpv-watch.lua"), 0o644); err != nil {
+	if err := copyFile(filepath.Join("clients", "mpv", "mpv-watch.lua"), filepath.Join(bundleDir, "mpv-watch.lua"), 0o644); err != nil {
 		return "", err
 	}
-	if err := os.WriteFile(filepath.Join(optsDir, "mpv-watch.conf"), []byte(configFile(role, room, displayName)), 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(bundleDir, "mpv-watch.conf"), []byte(configFile(role, room, displayName)), 0o644); err != nil {
 		return "", err
 	}
 	if err := os.WriteFile(filepath.Join(bundleDir, "QUICKSTART.md"), []byte(quickstart(role, target, binaryName)), 0o644); err != nil {
@@ -264,45 +257,71 @@ host_seek_cooldown=1.5
 }
 
 func quickstart(role string, target target, binaryName string) string {
-	runCommand := "./helper/" + binaryName
+	var scriptsDir, optsDir, runCommand string
 	if target.OS == "windows" {
-		runCommand = `.\\helper\\` + binaryName
+		scriptsDir = `%APPDATA%\mpv\scripts\`
+		optsDir = `%APPDATA%\mpv\script-opts\`
+		runCommand = `.\` + binaryName
+	} else {
+		scriptsDir = "~/.config/mpv/scripts/"
+		optsDir = "~/.config/mpv/script-opts/"
+		runCommand = "./" + binaryName
 	}
+
+	portableNote := ""
+	if target.OS == "windows" {
+		portableNote = `
+> **Portable mpv install?** Place the files in the ` + "`portable_config\\scripts\\`" + ` and
+> ` + "`portable_config\\script-opts\\`" + ` folders next to your mpv executable instead.
+`
+	} else {
+		portableNote = `
+> **Portable mpv install?** Place the files in the ` + "`portable_config/scripts/`" + ` and
+> ` + "`portable_config/script-opts/`" + ` folders next to your mpv executable instead.
+`
+	}
+
 	dashboard := `## Host Dashboard
 
-Open:
-
-http://127.0.0.1:8765
-
-The dashboard can change room/name, toggle sync, view guests, remove offline guests, and send force sync.
+Open http://127.0.0.1:8765 in your browser once the helper is running.
+The dashboard shows room state, connected guests, sync controls, and lets you force-sync or remove stale guests.
 `
 	if role == "guest" {
 		dashboard = `## Guest Controls
 
-Guests do not use a browser dashboard. Keep the helper running and use mpv's Ctrl+w menu for room/name/sync controls.
+Guests do not use a browser dashboard. Keep the helper running in the background and use mpv's **Ctrl+w** menu to change room, set your name, and toggle sync.
 `
 	}
 
-	return fmt.Sprintf(`# mpv Watch Together - %s
+	return fmt.Sprintf(`# mpv Watch Together — %s
 
-## Files
+## Bundle contents
 
-- mpv/scripts/mpv-watch.lua
-- mpv/script-opts/mpv-watch.conf
-- helper/%s
+| File | What it is |
+|---|---|
+| %s | Helper process — run this |
+| mpv-watch.lua | mpv Lua script — copy to your scripts folder |
+| mpv-watch.conf | Script options — copy to your script-opts folder |
 
 ## Install
 
-1. Copy mpv/scripts/mpv-watch.lua into your mpv scripts folder.
-2. Copy mpv/script-opts/mpv-watch.conf into your mpv script-opts folder.
-3. From this bundle folder, start the helper:
+### 1. Copy the mpv files
+
+- **mpv-watch.lua** → %s
+- **mpv-watch.conf** → %s
+%s
+### 2. Start the helper
+
+Open a terminal in this folder and run:
 
 %s
 
-4. Open mpv and press Ctrl+w for the Watch Together menu.
+Keep this window open while watching.
+
+### 3. Open mpv and press Ctrl+w
 
 %s
-`, title(role), binaryName, runCommand, dashboard)
+`, title(role), binaryName, scriptsDir, optsDir, portableNote, runCommand, dashboard)
 }
 
 func parseTargets(value string) ([]target, error) {
@@ -326,14 +345,7 @@ func parseTargets(value string) ([]target, error) {
 }
 
 func defaultTargets() string {
-	switch runtime.GOOS {
-	case "windows":
-		return "windows-amd64,darwin-amd64,darwin-arm64"
-	case "darwin":
-		return "darwin-" + runtime.GOARCH + ",windows-amd64"
-	default:
-		return runtime.GOOS + "-" + runtime.GOARCH
-	}
+	return "windows-amd64,darwin-arm64"
 }
 
 func title(value string) string {

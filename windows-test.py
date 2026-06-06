@@ -52,14 +52,11 @@ _cleaned_up = False
 # ---------------------------------------------------------------------------
 def check_required_files() -> None:
     required = {
-        "host helper binary": HOST_BUNDLE / "helper" / "mpv-watch-helper.exe",
-        "guest helper binary": GUEST_BUNDLE / "helper" / "mpv-watch-helper.exe",
-        "Lua script": HOST_BUNDLE / "mpv" / "scripts" / "mpv-watch.lua",
-        "host script-opts conf": HOST_BUNDLE / "mpv" / "script-opts" / "mpv-watch.conf",
-        "guest script-opts conf": GUEST_BUNDLE
-        / "mpv"
-        / "script-opts"
-        / "mpv-watch.conf",
+        "host helper binary": HOST_BUNDLE / "mpv-watch-helper.exe",
+        "guest helper binary": GUEST_BUNDLE / "mpv-watch-helper.exe",
+        "Lua script": HOST_BUNDLE / "mpv-watch.lua",
+        "host script-opts conf": HOST_BUNDLE / "mpv-watch.conf",
+        "guest script-opts conf": GUEST_BUNDLE / "mpv-watch.conf",
         "video file": VIDEO_PATH,
     }
     missing = {label: path for label, path in required.items() if not path.exists()}
@@ -91,15 +88,9 @@ def _install(src: Path, dst: Path) -> None:
 def install_mpv_files() -> None:
     print("\n[install] mpv script + conf")
     # Both bundles ship the same Lua script; use the host copy.
-    _install(
-        HOST_BUNDLE / "mpv" / "scripts" / "mpv-watch.lua",
-        MPV_SCRIPTS_DIR / "mpv-watch.lua",
-    )
+    _install(HOST_BUNDLE / "mpv-watch.lua", MPV_SCRIPTS_DIR / "mpv-watch.lua")
     # Install host conf as the baseline (guest overrides via --script-opts).
-    _install(
-        HOST_BUNDLE / "mpv" / "script-opts" / "mpv-watch.conf",
-        MPV_SCRIPT_OPTS_DIR / "mpv-watch.conf",
-    )
+    _install(HOST_BUNDLE / "mpv-watch.conf", MPV_SCRIPT_OPTS_DIR / "mpv-watch.conf")
 
 
 # ---------------------------------------------------------------------------
@@ -108,7 +99,7 @@ def install_mpv_files() -> None:
 def start_helper(
     bundle_dir: Path, extra_args: list[str] | None = None
 ) -> subprocess.Popen:
-    exe = bundle_dir / "helper" / "mpv-watch-helper.exe"
+    exe = bundle_dir / "mpv-watch-helper.exe"
     cmd = [str(exe)] + (extra_args or [])
     # Use CREATE_NEW_CONSOLE so each helper gets its own window and log output.
     proc = subprocess.Popen(
