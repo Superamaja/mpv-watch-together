@@ -43,7 +43,9 @@ Copy these files:
 
 Open a terminal in this folder and run:
 
+```{{ if .IsWindows }}powershell{{ else }}sh{{ end }}
 {{ .RunCommand }}
+```
 
 Keep this window open while watching.
 

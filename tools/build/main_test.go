@@ -5,21 +5,23 @@ import (
 	"testing"
 )
 
-func TestDefaultTargetsIncludeBothMacArchitectures(t *testing.T) {
+func TestDefaultTargetsIncludeAppleSiliconMacOnly(t *testing.T) {
 	targets, err := parseTargets(defaultTargets())
 	if err != nil {
 		t.Fatal(err)
 	}
 
-	want := map[target]bool{
-		{OS: "darwin", Arch: "amd64"}: true,
-		{OS: "darwin", Arch: "arm64"}: true,
+	want := []target{
+		{OS: "windows", Arch: "amd64"},
+		{OS: "darwin", Arch: "arm64"},
 	}
-	for _, got := range targets {
-		delete(want, got)
+	if len(targets) != len(want) {
+		t.Fatalf("default target count = %d, want %d: %#v", len(targets), len(want), targets)
 	}
-	for missing := range want {
-		t.Fatalf("default targets missing %s-%s", missing.OS, missing.Arch)
+	for index, got := range targets {
+		if got != want[index] {
+			t.Fatalf("default target %d = %#v, want %#v", index, got, want[index])
+		}
 	}
 }
 
@@ -66,6 +68,7 @@ func TestMacQuickstartUsesGeneratedScripts(t *testing.T) {
 		"run-helper.sh",
 		"./install-mpv-files.sh",
 		"./run-helper.sh",
+		"```sh\nsh ./run-helper.sh\n```",
 	} {
 		if !strings.Contains(doc, want) {
 			t.Fatalf("mac quickstart missing %q", want)

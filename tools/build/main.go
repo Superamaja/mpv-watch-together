@@ -67,6 +67,9 @@ func main() {
 	if err := safeRemove(filepath.Join(".gocache", "release-build")); err != nil {
 		fatal(err)
 	}
+	if err := removeGeneratedBundleDirs(outDir); err != nil {
+		fatal(err)
+	}
 	if zipBundles {
 		if err := safeRemove(filepath.Join(outDir, "packages")); err != nil {
 			fatal(err)
@@ -343,6 +346,25 @@ func safeRemove(path string) error {
 	return os.RemoveAll(absolutePath)
 }
 
+func removeGeneratedBundleDirs(outDir string) error {
+	entries, err := os.ReadDir(outDir)
+	if err != nil {
+		return err
+	}
+	for _, entry := range entries {
+		if !entry.IsDir() {
+			continue
+		}
+		name := entry.Name()
+		if strings.HasPrefix(name, "mpv-watch-host-") || strings.HasPrefix(name, "mpv-watch-guest-") {
+			if err := safeRemove(filepath.Join(outDir, name)); err != nil {
+				return err
+			}
+		}
+	}
+	return nil
+}
+
 func parseTargets(value string) ([]target, error) {
 	parts := strings.Split(value, ",")
 	targets := make([]target, 0, len(parts))
@@ -364,7 +386,7 @@ func parseTargets(value string) ([]target, error) {
 }
 
 func defaultTargets() string {
-	return "windows-amd64,darwin-amd64,darwin-arm64"
+	return "windows-amd64,darwin-arm64"
 }
 
 func title(value string) string {

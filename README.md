@@ -17,8 +17,6 @@ After a build, send the zip files in `dist/packages/`.
 dist/packages/
   mpv-watch-host-windows-amd64.zip
   mpv-watch-guest-windows-amd64.zip
-  mpv-watch-host-darwin-amd64.zip
-  mpv-watch-guest-darwin-amd64.zip
   mpv-watch-host-darwin-arm64.zip
   mpv-watch-guest-darwin-arm64.zip
 ```
@@ -29,8 +27,6 @@ The unzipped bundle folders are also written to `dist/` for inspection and local
 dist/
   mpv-watch-host-windows-amd64/
   mpv-watch-guest-windows-amd64/
-  mpv-watch-host-darwin-amd64/
-  mpv-watch-guest-darwin-amd64/
   mpv-watch-host-darwin-arm64/
   mpv-watch-guest-darwin-arm64/
 ```
@@ -69,7 +65,7 @@ macOS/Linux shell:
 ./scripts/build.sh
 ```
 
-The default Windows build creates Windows x64, Intel Mac, and Apple Silicon Mac bundles. You can override targets:
+The default build creates Windows x64 and Apple Silicon Mac bundles. You can override targets:
 
 ```powershell
 .\scripts\build.ps1 -targets windows-amd64,darwin-arm64
