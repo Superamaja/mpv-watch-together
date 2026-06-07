@@ -14,8 +14,9 @@ import (
 )
 
 type Client struct {
-	baseURL string
-	http    *http.Client
+	baseURL    string
+	restHTTP   *http.Client
+	streamHTTP *http.Client
 }
 
 type HTTPError struct {
@@ -49,8 +50,10 @@ func New(baseURL string) (*Client, error) {
 		return nil, errors.New("firebase database URL is required")
 	}
 	return &Client{
-		baseURL: baseURL,
-		http:    &http.Client{Timeout: 15 * time.Second},
+		baseURL:  baseURL,
+		restHTTP: &http.Client{Timeout: 15 * time.Second},
+		// Firebase SSE streams are long-lived; request contexts own cancellation.
+		streamHTTP: &http.Client{},
 	}, nil
 }
 
@@ -62,7 +65,7 @@ func (c *Client) ServerTime(ctx context.Context, roomPath string) (time.Time, er
 	if err != nil {
 		return time.Time{}, err
 	}
-	resp, err := c.http.Do(req)
+	resp, err := c.restHTTP.Do(req)
 	if err != nil {
 		return time.Time{}, err
 	}
@@ -132,7 +135,7 @@ func (c *Client) streamOnce(ctx context.Context, path string, events chan<- Stre
 	}
 	req.Header.Set("Accept", "text/event-stream")
 
-	resp, err := http.DefaultClient.Do(req)
+	resp, err := c.streamHTTP.Do(req)
 	if err != nil {
 		return err
 	}
@@ -193,7 +196,7 @@ func (c *Client) doJSON(ctx context.Context, method string, path string, body an
 		req.Header.Set("Content-Type", "application/json")
 	}
 
-	resp, err := c.http.Do(req)
+	resp, err := c.restHTTP.Do(req)
 	if err != nil {
 		return err
 	}
