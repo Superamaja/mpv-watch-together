@@ -5,6 +5,8 @@ local utils = require "mp.utils"
 
 local input_ok, input = pcall(require, "mp.input")
 
+local OSD_PREFIX = "Watch Together: "
+
 local opts = {
     helper_url = "http://127.0.0.1:8765",
     role = "guest",
@@ -96,7 +98,11 @@ local function trim(value)
     return value:gsub("^%s+", ""):gsub("%s+$", "")
 end
 
-local function request(method, path, body)
+local function show_message(message)
+    mp.osd_message(OSD_PREFIX .. message)
+end
+
+local function helper_request(method, path, body)
     local args = {
         "curl",
         "-sS",
@@ -147,7 +153,7 @@ local function request(method, path, body)
 end
 
 local function post_config()
-    local result, err = request("POST", "/api/config", {
+    local result, err = helper_request("POST", "/api/config", {
         role = opts.role,
         roomId = opts.room,
         displayName = opts.display_name,
@@ -170,14 +176,14 @@ set_sync = function(enabled)
         return
     end
 
-    local _, err = request("POST", "/api/sync", { enabled = enabled })
+    local _, err = helper_request("POST", "/api/sync", { enabled = enabled })
     if err then
         sync_enabled = false
         stop_timers()
         if enabled and err == "no host found in room" then
-            mp.osd_message("Watch Together: sync disabled: no host found in room")
+            show_message("sync disabled: no host found in room")
         else
-            mp.osd_message("Watch Together: helper unavailable")
+            show_message("helper unavailable")
         end
         msg.warn("Failed to set sync: " .. err)
         return
@@ -189,7 +195,7 @@ set_sync = function(enabled)
     else
         stop_timers()
     end
-    mp.osd_message(enabled and "Watch Together: sync on" or "Watch Together: sync off")
+    show_message(enabled and "sync on" or "sync off")
     if enabled and opts.role == "guest" then
         force_next_host_apply = true
         host_found_notified = false
@@ -269,7 +275,7 @@ send_state = function()
     if not sync_enabled then
         return
     end
-    local _, err = request("POST", "/api/mpv/state", playback_state())
+    local _, err = helper_request("POST", "/api/mpv/state", playback_state())
     if err then
         msg.warn("Failed to send playback state: " .. err)
     end
@@ -317,7 +323,7 @@ local function apply_remote_state(state, force)
     applying_remote_pause = true
     if state.isBuffering then
         mp.set_property_bool("pause", true)
-        mp.osd_message("Watch Together: host is buffering")
+        show_message("host is buffering")
     else
         mp.set_property_bool("pause", not state.isPlaying)
     end
@@ -346,22 +352,22 @@ local function apply_track_sync(track_sync)
     if track_sync.sid ~= nil and tostring(track_sync.sid) ~= "" then
         mp.set_property("sid", tostring(track_sync.sid))
     end
-    mp.osd_message("Watch Together: received tracks - audio " .. display_track_id(track_sync.aid) .. ", subtitles " .. display_track_id(track_sync.sid))
+    show_message("received tracks - audio " .. display_track_id(track_sync.aid) .. ", subtitles " .. display_track_id(track_sync.sid))
 end
 
 poll_commands = function()
-    local data, err = request("GET", "/api/mpv/commands")
+    local data, err = helper_request("GET", "/api/mpv/commands")
     if err or not data then
         if helper_connected == true then
             helper_connected = false
-            mp.osd_message("Watch Together: connection lost, reconnecting")
+            show_message("connection lost, reconnecting")
         else
             helper_connected = false
         end
         return
     end
     if helper_connected == false then
-        mp.osd_message("Watch Together: reconnected")
+        show_message("reconnected")
     end
     helper_connected = true
     if type(data.serverNow) == "number" then
@@ -371,7 +377,7 @@ poll_commands = function()
     if data.latestEvent and data.latestEvent.eventId and data.latestEvent.eventId ~= last_event_id then
         last_event_id = data.latestEvent.eventId
         if should_show_event(data.latestEvent, data.userId) then
-            mp.osd_message("Watch Together: " .. data.latestEvent.message)
+            show_message(data.latestEvent.message)
         end
         if opts.role == "host" and data.latestEvent.type == "guest_buffering" then
             mp.set_property_bool("pause", true)
@@ -382,16 +388,16 @@ poll_commands = function()
         sync_enabled = data.syncEnabled
         if was_sync_enabled and not sync_enabled and opts.role == "guest" then
             host_found_notified = false
-            mp.osd_message("Watch Together: sync disabled: no host found in room")
+            show_message("sync disabled: no host found in room")
         end
     end
     if data.forceSync and data.forceSync.syncId and data.forceSync.syncId ~= last_force_sync_id then
         last_force_sync_id = data.forceSync.syncId
         apply_remote_state(data.forceSync, true)
         if data.forceSync.reason == "auto_seek" then
-            mp.osd_message("Watch Together: synced to host seek")
+            show_message("synced to host seek")
         else
-            mp.osd_message("Watch Together: force synced")
+            show_message("force synced")
         end
         return
     end
@@ -405,9 +411,9 @@ poll_commands = function()
         apply_remote_state(data.host, force)
         if opts.role == "guest" and sync_enabled and not host_found_notified then
             host_found_notified = true
-            mp.osd_message(force and "Watch Together: host found, synced" or "Watch Together: host found")
+            show_message(force and "host found, synced" or "host found")
         elseif force then
-            mp.osd_message("Watch Together: synced to host")
+            show_message("synced to host")
         end
     elseif opts.role == "guest" and sync_enabled then
         host_found_notified = false
@@ -427,9 +433,9 @@ local function force_sync(current_time, reason)
         state.reason = reason
     end
 
-    local result, err = request("POST", "/api/host/force-sync", state)
+    local result, err = helper_request("POST", "/api/host/force-sync", state)
     if err then
-        mp.osd_message("Watch Together: force sync failed")
+        show_message("force sync failed")
         msg.warn("Force sync failed: " .. err)
         return
     end
@@ -437,9 +443,9 @@ local function force_sync(current_time, reason)
         if result.eventId then
             last_event_id = result.eventId
         end
-        mp.osd_message("Watch Together: " .. result.message)
+        show_message(result.message)
     else
-        mp.osd_message("Watch Together: force sync sent")
+        show_message("force sync sent")
     end
 end
 
@@ -493,12 +499,12 @@ local function show_menu()
                         if next_room ~= "" and next_room ~= opts.room then
                             opts.room = next_room
                             if save_runtime_config(true) then
-                                mp.osd_message("Watch Together: room set to " .. opts.room)
+                                show_message("room set to " .. opts.room)
                             else
-                                mp.osd_message("Watch Together: room update failed")
+                                show_message("room update failed")
                             end
                         elseif next_room == opts.room then
-                            mp.osd_message("Watch Together: room unchanged")
+                            show_message("room unchanged")
                         end
                     end)
                 elseif id == "name" then
@@ -507,12 +513,12 @@ local function show_menu()
                         if next_name ~= "" and next_name ~= opts.display_name then
                             opts.display_name = next_name
                             if save_runtime_config(false) then
-                                mp.osd_message("Watch Together: name set to " .. opts.display_name)
+                                show_message("name set to " .. opts.display_name)
                             else
-                                mp.osd_message("Watch Together: name update failed")
+                                show_message("name update failed")
                             end
                         elseif next_name == opts.display_name then
-                            mp.osd_message("Watch Together: name unchanged")
+                            show_message("name unchanged")
                         end
                     end)
                 end
@@ -527,7 +533,7 @@ local function show_menu()
         msg.warn("mp.input.select is unavailable; falling back to sync toggle")
     end
 
-    mp.osd_message("Watch Together: Ctrl+w toggles sync")
+    show_message("Ctrl+w toggles sync")
     set_sync(not sync_enabled)
 end
 
@@ -555,7 +561,7 @@ local function register_observers()
             mp.set_property_number("time-pos", target)
             applying_remote_seek = false
         end
-        mp.osd_message("Watch Together: paused by host")
+        show_message("paused by host")
     end)
 
     mp.observe_property("time-pos", "number", function(_, current_time)
@@ -596,7 +602,7 @@ local function register_observers()
                 applying_remote_seek = true
                 mp.set_property_number("time-pos", expected_host_time)
                 applying_remote_seek = false
-                mp.osd_message("Watch Together: snapped back to host")
+                show_message("snapped back to host")
             end
         end
 
