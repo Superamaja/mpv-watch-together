@@ -243,7 +243,7 @@ set_sync = function(enabled)
         sync_enabled = false
         stop_timers()
         if enabled and err == "no host found in room" then
-            mp.osd_message("Watch Together: no host found in room")
+            mp.osd_message("Watch Together: sync disabled: no host found in room")
         else
             mp.osd_message("Watch Together: helper unavailable")
         end
@@ -450,7 +450,7 @@ poll_commands = function()
         sync_enabled = data.syncEnabled
         if was_sync_enabled and not sync_enabled and opts.role == "guest" then
             host_found_notified = false
-            mp.osd_message("Watch Together: no host found in room")
+            mp.osd_message("Watch Together: sync disabled: no host found in room")
         end
     end
     if data.forceSync and data.forceSync.syncId and data.forceSync.syncId ~= last_force_sync_id then
