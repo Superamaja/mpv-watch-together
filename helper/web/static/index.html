@@ -66,6 +66,7 @@
         <div class="settings-head">
           <h2 class="panel-title">Room Settings</h2>
           <div class="settings-actions">
+            <button id="settingsHelp" class="btn btn-ghost" type="button">How It Works</button>
             <button id="resetSettings" class="btn btn-ghost" type="button">Reset</button>
             <button id="saveSettings" class="btn btn-ghost" type="button">Save Settings</button>
           </div>
@@ -130,6 +131,43 @@
           </fieldset>
         </div>
       </section>
+
+      <div class="modal-backdrop" id="settingsHelpModal" hidden>
+        <section class="modal" role="dialog" aria-modal="true" aria-labelledby="settingsHelpTitle">
+          <div class="modal-head">
+            <h2 id="settingsHelpTitle">Room Settings Details</h2>
+            <button id="closeSettingsHelp" class="icon-button" type="button">Close</button>
+          </div>
+          <div class="modal-body">
+            <section class="help-section">
+              <h3>How Settings Reach Clients</h3>
+              <p>Settings are stored once under the Firebase room as <code>settings</code>. mpv clients receive them through the existing command poll; there is no separate settings poll.</p>
+              <p>Save writes one settings object. Reset deletes that Firebase settings object, so clients fall back to built-in defaults.</p>
+            </section>
+            <section class="help-section">
+              <h3>Baseline Polling</h3>
+              <p><strong>Command poll</strong> is the fixed interval, in seconds, used when adaptive polling is off. This controls how often synced mpv clients ask the helper for force sync, track sync, events, and settings.</p>
+            </section>
+            <section class="help-section">
+              <h3>Adaptive Polling</h3>
+              <p>When adaptive polling is on, clients use <strong>Active poll</strong> briefly after sync activity, then return to <strong>Idle poll</strong>.</p>
+              <ul>
+                <li>Sync turned on: active for 8 seconds.</li>
+                <li>Force sync received: active for 8 seconds.</li>
+                <li>Track sync received: active for 6 seconds.</li>
+                <li>Guest host-found snap or initial forced apply: active for 8 seconds.</li>
+                <li>Host auto force-sync after seeking: active for 8 seconds.</li>
+              </ul>
+              <p>Normal playback does not keep clients in active polling forever. If the helper cannot be reached, clients back off up to <strong>Reconnect max</strong>.</p>
+            </section>
+            <section class="help-section">
+              <h3>Sync Behavior</h3>
+              <p><strong>Seek lock</strong> snaps guests back if they move farther than <strong>Seek lock gap</strong> from the projected host time.</p>
+              <p><strong>Auto sync seek</strong> lets the host send a force sync when the host seek jump is at least <strong>Host seek gap</strong>. <strong>Seek cooldown</strong> limits how often those auto syncs can fire.</p>
+            </section>
+          </div>
+        </section>
+      </div>
 
       <section class="grid">
         <article class="panel host-panel">

@@ -11,6 +11,9 @@ const els = {
   forceSync: document.querySelector("#forceSync"),
   pushTracks: document.querySelector("#pushTracks"),
   settingsPanel: document.querySelector("#settingsPanel"),
+  settingsHelp: document.querySelector("#settingsHelp"),
+  settingsHelpModal: document.querySelector("#settingsHelpModal"),
+  closeSettingsHelp: document.querySelector("#closeSettingsHelp"),
   saveSettings: document.querySelector("#saveSettings"),
   resetSettings: document.querySelector("#resetSettings"),
   commandInterval: document.querySelector("#commandInterval"),
@@ -173,6 +176,10 @@ function readNumber(input, fallback) {
 function formatSettingNumber(value) {
   if (!Number.isFinite(value)) return "";
   return String(Math.round(value * 100) / 100);
+}
+
+function setSettingsHelpOpen(open) {
+  els.settingsHelpModal.hidden = !open;
 }
 
 function hostCard(host) {
@@ -434,6 +441,19 @@ els.resetSettings.addEventListener("click", async () => {
     setStatus("Settings reset");
   } catch (error) {
     setStatus(error.message, false);
+  }
+});
+
+els.settingsHelp.addEventListener("click", () => setSettingsHelpOpen(true));
+els.closeSettingsHelp.addEventListener("click", () => setSettingsHelpOpen(false));
+els.settingsHelpModal.addEventListener("click", (event) => {
+  if (event.target === els.settingsHelpModal) {
+    setSettingsHelpOpen(false);
+  }
+});
+document.addEventListener("keydown", (event) => {
+  if (event.key === "Escape" && !els.settingsHelpModal.hidden) {
+    setSettingsHelpOpen(false);
   }
 });
 
