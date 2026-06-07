@@ -151,6 +151,9 @@ function renderSettings(settings) {
   for (const input of settingsInputs()) {
     input.disabled = !canEdit;
   }
+  for (const range of rangeInputs()) {
+    range.disabled = !canEdit;
+  }
   if (settingsDirty) return;
   els.commandInterval.value = formatSettingNumber(next.polling.commandInterval);
   els.adaptivePolling.checked = !!next.polling.adaptivePolling;
@@ -162,6 +165,24 @@ function renderSettings(settings) {
   els.autoForceSyncOnSeek.checked = !!next.sync.autoForceSyncOnSeek;
   els.hostSeekThreshold.value = formatSettingNumber(next.sync.hostSeekThreshold);
   els.hostSeekCooldown.value = formatSettingNumber(next.sync.hostSeekCooldown);
+  syncAllRangesFromNumbers();
+}
+
+function rangeInputs() {
+  return document.querySelectorAll("[data-range-for]");
+}
+
+function syncRangeFromNumber(numberInput) {
+  if (!numberInput?.id) return;
+  const range = document.querySelector(`[data-range-for="${numberInput.id}"]`);
+  if (range && numberInput.value !== "") range.value = numberInput.value;
+}
+
+function syncAllRangesFromNumbers() {
+  for (const range of rangeInputs()) {
+    const number = document.getElementById(range.dataset.rangeFor);
+    if (number && number.value !== "") range.value = number.value;
+  }
 }
 
 function settingsInputs() {
@@ -270,11 +291,11 @@ function guestRow(userId, guest, host) {
         <div class="pill ${stale ? "offline" : "online"}">${stale ? "offline" : "online"}</div>
         ${guest.isBuffering ? `<div class="pill buffering">buffering</div>` : ""}
         ${drift ? `<div class="pill ${drift.level}">${escapeHTML(drift.label)}</div>` : ""}
-        ${canSync ? `<button class="guest-action" data-sync-to-guest="${escapeHTML(userId)}" title="Move the whole room to ${escapeHTML(name)}'s current position">
+        ${canSync ? `<button class="guest-action" data-sync-to-guest="${escapeHTML(userId)}" data-tip="Move the whole room to ${escapeHTML(name)}'s current position" data-tip-align="end">
           <svg viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg" aria-hidden="true"><circle cx="12" cy="12" r="8" stroke="currentColor" stroke-width="1.8" /><circle cx="12" cy="12" r="2.5" fill="currentColor" /></svg>
           Use Guest Time
         </button>` : ""}
-        ${canRemove ? `<button class="icon-button" data-remove-guest="${escapeHTML(userId)}" title="Remove offline guest">Remove</button>` : ""}
+        ${canRemove ? `<button class="icon-button" data-remove-guest="${escapeHTML(userId)}" data-tip="Remove this offline guest from the room" data-tip-align="end">Remove</button>` : ""}
       </div>
     </div>
   `;
@@ -452,8 +473,23 @@ els.pushTracks.addEventListener("click", async () => {
 for (const input of settingsInputs()) {
   input.addEventListener("input", () => {
     settingsDirty = true;
+    syncRangeFromNumber(input);
   });
   input.addEventListener("change", () => {
+    settingsDirty = true;
+    syncRangeFromNumber(input);
+  });
+}
+
+for (const range of rangeInputs()) {
+  const number = document.getElementById(range.dataset.rangeFor);
+  if (!number) continue;
+  const label = range.getAttribute("aria-label");
+  if (label && !number.getAttribute("aria-label")) {
+    number.setAttribute("aria-label", label);
+  }
+  range.addEventListener("input", () => {
+    number.value = range.value;
     settingsDirty = true;
   });
 }

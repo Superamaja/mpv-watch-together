@@ -170,7 +170,10 @@
               <div class="settings-grid">
                 <label class="field" data-tip="How often synced mpv clients ask the helper for commands when adaptive polling is off.">
                   <span>Command poll</span>
-                  <input id="commandInterval" type="number" min="0.25" max="3" step="0.05" />
+                  <div class="slider-field">
+                    <input class="range" type="range" min="0.25" max="3" step="0.05" data-range-for="commandInterval" aria-label="Command poll" />
+                    <input id="commandInterval" class="range-value" type="number" min="0.25" max="3" step="0.05" />
+                  </div>
                 </label>
               </div>
             </fieldset>
@@ -184,15 +187,24 @@
                 </label>
                 <label class="field" data-tip="Polling interval used when no recent sync activity is happening.">
                   <span>Idle poll</span>
-                  <input id="idleInterval" type="number" min="0.5" max="5" step="0.05" />
+                  <div class="slider-field">
+                    <input class="range" type="range" min="0.5" max="5" step="0.05" data-range-for="idleInterval" aria-label="Idle poll" />
+                    <input id="idleInterval" class="range-value" type="number" min="0.5" max="5" step="0.05" />
+                  </div>
                 </label>
                 <label class="field" data-tip="Polling interval used briefly after sync starts, force sync, track sync, or host snap activity.">
                   <span>Active poll</span>
-                  <input id="activeInterval" type="number" min="0.25" max="2" step="0.05" />
+                  <div class="slider-field">
+                    <input class="range" type="range" min="0.25" max="2" step="0.05" data-range-for="activeInterval" aria-label="Active poll" />
+                    <input id="activeInterval" class="range-value" type="number" min="0.25" max="2" step="0.05" />
+                  </div>
                 </label>
                 <label class="field" data-tip="Maximum polling delay while a client is reconnecting to the helper.">
                   <span>Reconnect max</span>
-                  <input id="reconnectBackoffMax" type="number" min="1" max="15" step="0.25" />
+                  <div class="slider-field">
+                    <input class="range" type="range" min="1" max="15" step="0.25" data-range-for="reconnectBackoffMax" aria-label="Reconnect max" />
+                    <input id="reconnectBackoffMax" class="range-value" type="number" min="1" max="15" step="0.25" />
+                  </div>
                 </label>
               </div>
             </fieldset>
@@ -206,7 +218,10 @@
                 </label>
                 <label class="field" data-tip="How far a guest can drift from the host before seek-lock snaps them back.">
                   <span>Seek lock gap</span>
-                  <input id="seekLockThreshold" type="number" min="0.5" max="10" step="0.1" />
+                  <div class="slider-field">
+                    <input class="range" type="range" min="0.5" max="10" step="0.1" data-range-for="seekLockThreshold" aria-label="Seek lock gap" />
+                    <input id="seekLockThreshold" class="range-value" type="number" min="0.5" max="10" step="0.1" />
+                  </div>
                 </label>
                 <label class="check-field" data-tip="Send an automatic force sync when the host seeks far enough.">
                   <input id="autoForceSyncOnSeek" type="checkbox" />
@@ -214,11 +229,17 @@
                 </label>
                 <label class="field" data-tip="How large a host seek must be before auto-sync triggers.">
                   <span>Host seek gap</span>
-                  <input id="hostSeekThreshold" type="number" min="0.5" max="10" step="0.1" />
+                  <div class="slider-field">
+                    <input class="range" type="range" min="0.5" max="10" step="0.1" data-range-for="hostSeekThreshold" aria-label="Host seek gap" />
+                    <input id="hostSeekThreshold" class="range-value" type="number" min="0.5" max="10" step="0.1" />
+                  </div>
                 </label>
                 <label class="field" data-tip="Minimum time between host auto-sync events after seeks.">
                   <span>Seek cooldown</span>
-                  <input id="hostSeekCooldown" type="number" min="0.25" max="10" step="0.25" />
+                  <div class="slider-field">
+                    <input class="range" type="range" min="0.25" max="10" step="0.25" data-range-for="hostSeekCooldown" aria-label="Seek cooldown" />
+                    <input id="hostSeekCooldown" class="range-value" type="number" min="0.25" max="10" step="0.25" />
+                  </div>
                 </label>
               </div>
             </fieldset>

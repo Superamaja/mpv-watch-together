@@ -923,6 +923,93 @@ input[type="checkbox"] {
   overflow-wrap: anywhere;
 }
 
+/* ---------- Slider + value field ---------- */
+.slider-field {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.range-value {
+  width: 66px;
+  flex: 0 0 auto;
+  padding: 0 8px;
+  text-align: center;
+  font-variant-numeric: tabular-nums;
+  -moz-appearance: textfield;
+  appearance: textfield;
+}
+
+.range-value::-webkit-outer-spin-button,
+.range-value::-webkit-inner-spin-button {
+  -webkit-appearance: none;
+  margin: 0;
+}
+
+.range {
+  flex: 1;
+  min-width: 0;
+  height: 6px;
+  min-height: 0;
+  margin: 0;
+  padding: 0;
+  border: 0;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.12);
+  cursor: pointer;
+  -webkit-appearance: none;
+  appearance: none;
+}
+
+.range:focus {
+  outline: none;
+  box-shadow: none;
+}
+
+.range:focus-visible {
+  box-shadow: 0 0 0 3px var(--accent-soft);
+}
+
+.range::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  appearance: none;
+  width: 16px;
+  height: 16px;
+  border-radius: 50%;
+  background: var(--accent);
+  border: 2px solid var(--surface-solid);
+  box-shadow: 0 1px 4px rgba(0, 0, 0, 0.4);
+  cursor: pointer;
+}
+
+.range::-moz-range-thumb {
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  background: var(--accent);
+  border: 2px solid var(--surface-solid);
+  box-shadow: 0 1px 4px rgba(0, 0, 0, 0.4);
+  cursor: pointer;
+}
+
+.range::-moz-range-track {
+  height: 6px;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.12);
+}
+
+.range:disabled {
+  cursor: not-allowed;
+}
+
+.range:disabled::-webkit-slider-thumb {
+  background: var(--text-faint);
+}
+
+.range:disabled::-moz-range-thumb {
+  background: var(--text-faint);
+}
+
 /* ---------- Help modal ---------- */
 .modal-backdrop {
   position: fixed;
@@ -1133,6 +1220,32 @@ input[type="checkbox"] {
   opacity: 1;
   visibility: visible;
   transform: translate(-50%, 0) rotate(45deg);
+}
+
+/* End-aligned variant: bubble anchors to the element's right edge and
+   extends leftward, so tooltips on right-edge controls don't overflow. */
+[data-tip-align="end"]::after {
+  left: auto;
+  right: 0;
+  transform: translate(0, 5px);
+}
+
+[data-tip-align="end"]::before {
+  left: auto;
+  right: 13px;
+  transform: translate(0, 5px) rotate(45deg);
+}
+
+[data-tip-align="end"]:hover::after,
+[data-tip-align="end"]:focus-visible::after,
+[data-tip-align="end"]:focus-within::after {
+  transform: translate(0, 0);
+}
+
+[data-tip-align="end"]:hover::before,
+[data-tip-align="end"]:focus-visible::before,
+[data-tip-align="end"]:focus-within::before {
+  transform: translate(0, 0) rotate(45deg);
 }
 
 /* ---------- Responsive ---------- */
