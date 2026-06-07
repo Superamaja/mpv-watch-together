@@ -14,6 +14,8 @@ type ParticipantState struct {
 	IsPlaying    bool    `json:"isPlaying"`
 	IsBuffering  bool    `json:"isBuffering"`
 	Duration     float64 `json:"duration"`
+	AudioID      string  `json:"aid,omitempty"`
+	SubtitleID   string  `json:"sid,omitempty"`
 	TimeReliable bool    `json:"timeReliable"`
 	SampledAt    int64   `json:"sampledAt"`
 	LastUpdated  int64   `json:"lastUpdated"`
@@ -31,6 +33,14 @@ type ForceSync struct {
 	IsBuffering bool    `json:"isBuffering"`
 	Duration    float64 `json:"duration"`
 	SampledAt   int64   `json:"sampledAt"`
+}
+
+type TrackSync struct {
+	SyncID     string `json:"syncId"`
+	IssuedAt   int64  `json:"issuedAt"`
+	IssuedBy   string `json:"issuedBy"`
+	AudioID    string `json:"aid,omitempty"`
+	SubtitleID string `json:"sid,omitempty"`
 }
 
 type Permissions struct {
@@ -57,6 +67,7 @@ type Room struct {
 	Guests      map[string]ParticipantState `json:"guests,omitempty"`
 	Permissions Permissions                 `json:"permissions"`
 	ForceSync   *ForceSync                  `json:"forceSync,omitempty"`
+	TrackSync   *TrackSync                  `json:"trackSync,omitempty"`
 	Events      RoomEvents                  `json:"events,omitempty"`
 	Status      string                      `json:"status"`
 	UpdatedAt   int64                       `json:"updatedAt"`
@@ -69,6 +80,7 @@ type CommandSnapshot struct {
 	SyncEnabled bool              `json:"syncEnabled"`
 	Host        *ParticipantState `json:"host,omitempty"`
 	ForceSync   *ForceSync        `json:"forceSync,omitempty"`
+	TrackSync   *TrackSync        `json:"trackSync,omitempty"`
 	LatestEvent *RoomEvent        `json:"latestEvent,omitempty"`
 	ServerNow   int64             `json:"serverNow"`
 }

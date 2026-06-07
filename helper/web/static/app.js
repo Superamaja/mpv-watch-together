@@ -9,6 +9,7 @@ const els = {
   toggleSync: document.querySelector("#toggleSync"),
   toggleSyncLabel: document.querySelector("#toggleSync .btn-toggle-label"),
   forceSync: document.querySelector("#forceSync"),
+  pushTracks: document.querySelector("#pushTracks"),
   hostState: document.querySelector("#hostState"),
   guestHeadingText: document.querySelector("#guestHeadingText"),
   guestList: document.querySelector("#guestList"),
@@ -53,6 +54,7 @@ function render(next) {
   els.toggleSync.classList.toggle("is-on", !!state.syncEnabled);
   els.toggleSync.setAttribute("aria-pressed", String(!!state.syncEnabled));
   els.forceSync.disabled = state.role !== "host" || !state.syncEnabled;
+  els.pushTracks.disabled = state.role !== "host" || !state.syncEnabled;
 
   const host = state.room?.host;
   els.hostState.innerHTML = host ? hostCard(host) : `<div class="empty">No host state yet.</div>`;
@@ -88,6 +90,8 @@ function hostCard(host) {
     </div>
     <dl class="facts">
       <dt>Last sync</dt><dd>${escapeHTML(formatWallTime(state.room?.forceSync?.issuedAt))}</dd>
+      <dt>Audio</dt><dd>${escapeHTML(formatTrackID(host.aid))}</dd>
+      <dt>Subtitles</dt><dd>${escapeHTML(formatTrackID(host.sid))}</dd>
       <dt>Last seen</dt><dd>${escapeHTML(formatAge(host.lastSeen))}</dd>
     </dl>
   `;
@@ -188,7 +192,7 @@ function notifyRoomEvent(event) {
 }
 
 function showsSelfEvent(type) {
-  return type === "force_sync" || type === "auto_force_sync" || type === "config_changed";
+  return type === "force_sync" || type === "auto_force_sync" || type === "config_changed" || type === "tracks_synced";
 }
 
 function showToast(message) {
@@ -231,8 +235,14 @@ function formatWallTime(value) {
   });
 }
 
+function formatTrackID(value) {
+  if (value === "no") return "off";
+  if (value === "" || value == null) return "default";
+  return String(value);
+}
+
 function escapeHTML(value) {
-  return value.replace(/[&<>"']/g, (char) => ({
+  return String(value).replace(/[&<>"']/g, (char) => ({
     "&": "&amp;",
     "<": "&lt;",
     ">": "&gt;",
@@ -272,6 +282,15 @@ els.forceSync.addEventListener("click", async () => {
   try {
     const result = await api("/api/host/force-sync", { method: "POST", body: "{}" });
     setStatus(result.message || "Force sync sent");
+  } catch (error) {
+    setStatus(error.message, false);
+  }
+});
+
+els.pushTracks.addEventListener("click", async () => {
+  try {
+    const result = await api("/api/host/track-sync", { method: "POST", body: "{}" });
+    setStatus(result.message || "Tracks pushed");
   } catch (error) {
     setStatus(error.message, false);
   }

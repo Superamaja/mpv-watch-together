@@ -7,6 +7,7 @@ local input_ok, input = pcall(require, "mp.input")
 
 local opts = {
     helper_url = "http://127.0.0.1:8765",
+    ipc_server = "",
     role = "guest",
     room = "",
     display_name = "mpv watcher",
@@ -24,6 +25,7 @@ options.read_options(opts, "mpv-watch")
 
 local sync_enabled = opts.sync_on_start == "yes"
 local last_force_sync_id = nil
+local last_track_sync_id = nil
 local last_event_id = nil
 local last_server_now = nil
 local last_server_wall = nil
@@ -36,11 +38,19 @@ local last_time_wall = nil
 local last_auto_force_sync_at = 0
 local host_found_notified = false
 local helper_connected = nil  -- nil=never tried, true=ok, false=was ok then lost
+local runtime_ready = false
+local ipc_server_started = false
+local observers_registered = false
 local state_timer = nil
 local command_timer = nil
 local poll_commands = nil
 local set_sync = nil
 local send_state = nil
+local ensure_runtime_ready = nil
+
+local path_separator = package.config:sub(1, 1)
+local is_windows = path_separator == "\\"
+math.randomseed(os.time() + math.floor(mp.get_time() * 1000000))
 
 local function start_timers()
     helper_connected = nil
@@ -81,6 +91,67 @@ local function trim(value)
         return ""
     end
     return value:gsub("^%s+", ""):gsub("%s+$", "")
+end
+
+local function ipc_server_name()
+    local pid = trim(mp.get_property("pid", ""))
+    if pid == "" then
+        pid = tostring(math.floor(mp.get_time() * 1000000))
+    end
+    return "mpv-watch-" .. pid .. "-" .. tostring(math.random(100000, 999999))
+end
+
+local function ipc_path_exists(path)
+    if is_windows then
+        return false
+    end
+    return utils.file_info(path) ~= nil
+end
+
+local function default_ipc_server()
+    local name = ipc_server_name()
+    if is_windows then
+        return "\\\\.\\pipe\\" .. name
+    end
+    local tmp_dir = os.getenv("TMPDIR") or "/tmp"
+    return utils.join_path(tmp_dir, name .. ".sock")
+end
+
+local function unique_ipc_server_path(path)
+    if is_windows or not ipc_path_exists(path) then
+        return path
+    end
+
+    local attempt = 0
+    while ipc_path_exists(path) and attempt < 20 do
+        attempt = attempt + 1
+        path = path .. "-" .. tostring(attempt)
+    end
+    return path
+end
+
+local function ensure_ipc_server()
+    if ipc_server_started then
+        return true
+    end
+
+    local ipc_server = trim(opts.ipc_server)
+    if ipc_server == "" then
+        ipc_server = default_ipc_server()
+    end
+    ipc_server = unique_ipc_server_path(ipc_server)
+
+    local ok, err = pcall(mp.set_property, "input-ipc-server", ipc_server)
+    if not ok then
+        msg.error("Failed to open mpv IPC server: " .. tostring(err))
+        mp.osd_message("Watch Together: failed to open mpv IPC")
+        return false
+    end
+
+    opts.ipc_server = ipc_server
+    ipc_server_started = true
+    msg.info("Opened mpv IPC server: " .. opts.ipc_server)
+    return true
 end
 
 local function request(method, path, body)
@@ -138,6 +209,7 @@ local function post_config()
         role = opts.role,
         roomId = opts.room,
         displayName = opts.display_name,
+        mpvIpcServer = opts.ipc_server,
     })
     if err then
         msg.warn("Failed to save helper config: " .. err)
@@ -151,6 +223,12 @@ local function post_config()
 end
 
 set_sync = function(enabled)
+    if enabled and not ensure_runtime_ready() then
+        sync_enabled = false
+        stop_timers()
+        return
+    end
+
     local _, err = request("POST", "/api/sync", { enabled = enabled })
     if err then
         sync_enabled = false
@@ -180,6 +258,10 @@ set_sync = function(enabled)
 end
 
 local function save_runtime_config(changed_room)
+    if not ensure_runtime_ready() then
+        return false
+    end
+
     local was_synced = sync_enabled
     if changed_room and was_synced then
         set_sync(false)
@@ -215,12 +297,18 @@ local function is_buffering()
     return type(cache_state) == "table" and cache_state.underrun == true
 end
 
+local function track_id(property)
+    return trim(mp.get_property(property, "no"))
+end
+
 local function playback_state()
     return {
         currentTime = mp.get_property_number("time-pos", 0),
         isPlaying = not mp.get_property_bool("pause", true),
         isBuffering = is_buffering(),
         duration = mp.get_property_number("duration", 0),
+        aid = track_id("aid"),
+        sid = track_id("sid"),
     }
 end
 
@@ -280,6 +368,20 @@ local function apply_remote_state(state, force)
     applying_remote_pause = false
 end
 
+local function apply_track_sync(track_sync)
+    if not sync_enabled or opts.role == "host" or not track_sync then
+        return
+    end
+
+    if track_sync.aid ~= nil and tostring(track_sync.aid) ~= "" then
+        mp.set_property("aid", tostring(track_sync.aid))
+    end
+    if track_sync.sid ~= nil and tostring(track_sync.sid) ~= "" then
+        mp.set_property("sid", tostring(track_sync.sid))
+    end
+    mp.osd_message("Watch Together: audio/subtitles synced")
+end
+
 poll_commands = function()
     local data, err = request("GET", "/api/mpv/commands")
     if err or not data then
@@ -326,6 +428,10 @@ poll_commands = function()
         end
         return
     end
+    if data.trackSync and data.trackSync.syncId and data.trackSync.syncId ~= last_track_sync_id then
+        last_track_sync_id = data.trackSync.syncId
+        apply_track_sync(data.trackSync)
+    end
     if data.host then
         local force = force_next_host_apply
         force_next_host_apply = false
@@ -342,6 +448,10 @@ poll_commands = function()
 end
 
 local function force_sync(current_time, reason)
+    if not ensure_runtime_ready() then
+        return
+    end
+
     local state = playback_state()
     if type(current_time) == "number" then
         state.currentTime = current_time
@@ -386,6 +496,10 @@ local function prompt_text_next_tick(prompt, default, callback)
 end
 
 local function show_menu()
+    if not ensure_runtime_ready() then
+        return
+    end
+
     local actions = {
         { label = sync_enabled and "Turn sync off" or "Turn sync on", id = "toggle" },
         { label = "Set room", id = "room" },
@@ -450,12 +564,91 @@ local function show_menu()
     set_sync(not sync_enabled)
 end
 
--- Lazily push config on the first menu open so startup stays zero-cost when
+local function register_observers()
+    if observers_registered then
+        return
+    end
+    observers_registered = true
+
+    mp.observe_property("pause", "bool", function(_, paused)
+        if paused or not sync_enabled or opts.role ~= "guest" or applying_remote_pause then
+            return
+        end
+        -- Guest manually unpaused while host is paused - re-pause and snap back.
+        if not last_host_state or last_host_state.isPlaying then
+            return
+        end
+        local target = projected_time(last_host_state)
+        applying_remote_pause = true
+        mp.set_property_bool("pause", true)
+        applying_remote_pause = false
+        if target then
+            applying_remote_seek = true
+            mp.set_property_number("time-pos", target)
+            applying_remote_seek = false
+        end
+        mp.osd_message("Watch Together: paused by host")
+    end)
+
+    mp.observe_property("time-pos", "number", function(_, current_time)
+        if not current_time then
+            return
+        end
+
+        local now = mp.get_time()
+        if applying_remote_seek then
+            last_time_pos = current_time
+            last_time_wall = now
+            return
+        end
+
+        if opts.role == "host" and sync_enabled and opts.auto_force_sync_on_seek == "yes" and last_time_pos and last_time_wall then
+            local elapsed = math.max(0, now - last_time_wall)
+            local expected_time = last_time_pos + elapsed
+            local drift = math.abs(current_time - expected_time)
+            local threshold = tonumber(opts.host_seek_threshold) or 2.5
+            local cooldown = tonumber(opts.host_seek_cooldown) or 1.5
+            if drift >= threshold and now - last_auto_force_sync_at >= cooldown then
+                last_auto_force_sync_at = now
+                force_sync(current_time, "auto_seek")
+            end
+        elseif opts.role == "guest" and sync_enabled and opts.seek_lock == "yes" and last_host_state then
+            local expected_host_time = projected_time(last_host_state)
+            local threshold = tonumber(opts.seek_lock_threshold) or 3.0
+            if expected_host_time and math.abs(current_time - expected_host_time) >= threshold then
+                applying_remote_seek = true
+                mp.set_property_number("time-pos", expected_host_time)
+                applying_remote_seek = false
+                mp.osd_message("Watch Together: snapped back to host")
+            end
+        end
+
+        last_time_pos = current_time
+        last_time_wall = now
+    end)
+end
+
+ensure_runtime_ready = function()
+    if runtime_ready then
+        return true
+    end
+    if not ensure_ipc_server() then
+        return false
+    end
+    register_observers()
+    runtime_ready = true
+    return true
+end
+
+-- Lazily push config on the first menu open so startup stays near zero-cost when
 -- sync_on_start=no. Once config is pushed (or sync is already on) this is a
 -- no-op on every subsequent call.
 local config_pushed = false
 
 mp.add_key_binding("Ctrl+w", "mpv-watch-menu", function()
+    if not ensure_runtime_ready() then
+        return
+    end
     if not config_pushed and not sync_enabled then
         config_pushed = true
         post_config()
@@ -463,65 +656,10 @@ mp.add_key_binding("Ctrl+w", "mpv-watch-menu", function()
     show_menu()
 end)
 
-mp.observe_property("pause", "bool", function(_, paused)
-    if paused or not sync_enabled or opts.role ~= "guest" or applying_remote_pause then
-        return
-    end
-    -- Guest manually unpaused while host is paused — re-pause and snap back.
-    if not last_host_state or last_host_state.isPlaying then
-        return
-    end
-    local target = projected_time(last_host_state)
-    applying_remote_pause = true
-    mp.set_property_bool("pause", true)
-    applying_remote_pause = false
-    if target then
-        applying_remote_seek = true
-        mp.set_property_number("time-pos", target)
-        applying_remote_seek = false
-    end
-    mp.osd_message("Watch Together: paused by host")
-end)
-
-mp.observe_property("time-pos", "number", function(_, current_time)
-    if not current_time then
-        return
-    end
-
-    local now = mp.get_time()
-    if applying_remote_seek then
-        last_time_pos = current_time
-        last_time_wall = now
-        return
-    end
-
-    if opts.role == "host" and sync_enabled and opts.auto_force_sync_on_seek == "yes" and last_time_pos and last_time_wall then
-        local elapsed = math.max(0, now - last_time_wall)
-        local expected_time = last_time_pos + elapsed
-        local drift = math.abs(current_time - expected_time)
-        local threshold = tonumber(opts.host_seek_threshold) or 2.5
-        local cooldown = tonumber(opts.host_seek_cooldown) or 1.5
-        if drift >= threshold and now - last_auto_force_sync_at >= cooldown then
-            last_auto_force_sync_at = now
-            force_sync(current_time, "auto_seek")
-        end
-    elseif opts.role == "guest" and sync_enabled and opts.seek_lock == "yes" and last_host_state then
-        local expected_host_time = projected_time(last_host_state)
-        local threshold = tonumber(opts.seek_lock_threshold) or 3.0
-        if expected_host_time and math.abs(current_time - expected_host_time) >= threshold then
-            applying_remote_seek = true
-            mp.set_property_number("time-pos", expected_host_time)
-            applying_remote_seek = false
-            mp.osd_message("Watch Together: snapped back to host")
-        end
-    end
-
-    last_time_pos = current_time
-    last_time_wall = now
-end)
-
 if opts.sync_on_start == "yes" then
-    config_pushed = true
-    post_config()
-    set_sync(true)
+    if ensure_runtime_ready() then
+        config_pushed = true
+        post_config()
+        set_sync(true)
+    end
 end

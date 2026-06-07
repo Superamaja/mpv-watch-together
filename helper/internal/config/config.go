@@ -14,6 +14,7 @@ type Config struct {
 	RoomID              string
 	DisplayName         string
 	UserID              string
+	MPVIPCServer        string
 	FirebaseDatabaseURL string
 }
 
@@ -31,6 +32,7 @@ func Load(args []string, builtinFirebaseURL string) (Config, error) {
 		RoomID:              os.Getenv("MPV_WATCH_ROOM"),
 		DisplayName:         envOrDefault("MPV_WATCH_DISPLAY_NAME", "mpv watcher"),
 		UserID:              envOrDefault("MPV_WATCH_USER_ID", randomishID()),
+		MPVIPCServer:        os.Getenv("MPV_WATCH_MPV_IPC_SERVER"),
 		FirebaseDatabaseURL: fbURL,
 	}
 
@@ -40,6 +42,7 @@ func Load(args []string, builtinFirebaseURL string) (Config, error) {
 	fs.StringVar(&cfg.RoomID, "room", cfg.RoomID, "watch room ID")
 	fs.StringVar(&cfg.DisplayName, "name", cfg.DisplayName, "display name")
 	fs.StringVar(&cfg.UserID, "user-id", cfg.UserID, "stable local user ID")
+	fs.StringVar(&cfg.MPVIPCServer, "mpv-ipc-server", cfg.MPVIPCServer, "mpv JSON IPC socket or named pipe path")
 	fs.StringVar(&cfg.FirebaseDatabaseURL, "firebase-url", cfg.FirebaseDatabaseURL, "Firebase Realtime Database URL")
 	if err := fs.Parse(args); err != nil {
 		return Config{}, err
@@ -49,6 +52,7 @@ func Load(args []string, builtinFirebaseURL string) (Config, error) {
 	cfg.RoomID = strings.TrimSpace(cfg.RoomID)
 	cfg.DisplayName = strings.TrimSpace(cfg.DisplayName)
 	cfg.UserID = strings.TrimSpace(cfg.UserID)
+	cfg.MPVIPCServer = strings.TrimSpace(cfg.MPVIPCServer)
 	cfg.FirebaseDatabaseURL = strings.TrimRight(strings.TrimSpace(cfg.FirebaseDatabaseURL), "/")
 
 	if cfg.Role != "host" && cfg.Role != "guest" {

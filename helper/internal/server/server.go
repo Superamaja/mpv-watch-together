@@ -35,6 +35,7 @@ const (
 	eventGuestSynced    = "guest_synced"
 	eventHostLeft       = "host_left"
 	eventHostSynced     = "host_synced"
+	eventTracksSynced   = "tracks_synced"
 
 	forceSyncReasonAutoSeek = "auto_seek"
 )
@@ -88,6 +89,7 @@ func (a *App) Handler() http.Handler {
 	mux.HandleFunc("GET /api/mpv/commands", a.handleGetMPVCommands)
 	mux.HandleFunc("POST /api/sync", a.handlePostSync)
 	mux.HandleFunc("POST /api/host/force-sync", a.handlePostForceSync)
+	mux.HandleFunc("POST /api/host/track-sync", a.handlePostTrackSync)
 	mux.HandleFunc("DELETE /api/host/guests/{userId}", a.handleDeleteGuest)
 	mux.HandleFunc("GET /api/events", a.handleEvents)
 
@@ -155,15 +157,7 @@ func (a *App) publishRoomEvent(ctx context.Context, roomID string, eventType str
 	if roomID == "" {
 		return nil
 	}
-	now := a.serverNow()
-	event := protocol.RoomEvent{
-		EventID: fmt.Sprintf("%s_%d_%06d", eventType, now, rand.Intn(1000000)),
-		Type:    eventType,
-		Message: message,
-		UserID:  userID,
-		Level:   level,
-		At:      now,
-	}
+	event := a.newRoomEvent(eventType, message, userID, level)
 
 	reqCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
 	defer cancel()
@@ -177,6 +171,18 @@ func (a *App) publishRoomEvent(ctx context.Context, roomID string, eventType str
 	a.mu.Unlock()
 	a.publishState()
 	return &event
+}
+
+func (a *App) newRoomEvent(eventType string, message string, userID string, level string) protocol.RoomEvent {
+	now := a.serverNow()
+	return protocol.RoomEvent{
+		EventID: fmt.Sprintf("%s_%d_%06d", eventType, now, rand.Intn(1000000)),
+		Type:    eventType,
+		Message: message,
+		UserID:  userID,
+		Level:   level,
+		At:      now,
+	}
 }
 
 func (a *App) monitorServerClock() {
@@ -291,22 +297,24 @@ func (a *App) handleGetConfig(w http.ResponseWriter, r *http.Request) {
 	defer a.mu.RUnlock()
 	serverNow := protocol.NowMillis() + a.serverTimeOffset
 	writeJSON(w, http.StatusOK, map[string]any{
-		"addr":        a.cfg.Addr,
-		"role":        a.cfg.Role,
-		"roomId":      a.cfg.RoomID,
-		"displayName": a.cfg.DisplayName,
-		"userId":      a.cfg.UserID,
-		"syncEnabled": a.syncEnabled,
-		"serverNow":   serverNow,
-		"room":        a.room,
+		"addr":         a.cfg.Addr,
+		"role":         a.cfg.Role,
+		"roomId":       a.cfg.RoomID,
+		"displayName":  a.cfg.DisplayName,
+		"userId":       a.cfg.UserID,
+		"mpvIpcServer": a.cfg.MPVIPCServer,
+		"syncEnabled":  a.syncEnabled,
+		"serverNow":    serverNow,
+		"room":         a.room,
 	})
 }
 
 func (a *App) handlePostConfig(w http.ResponseWriter, r *http.Request) {
 	var req struct {
-		Role        string `json:"role"`
-		RoomID      string `json:"roomId"`
-		DisplayName string `json:"displayName"`
+		Role         string `json:"role"`
+		RoomID       string `json:"roomId"`
+		DisplayName  string `json:"displayName"`
+		MPVIPCServer string `json:"mpvIpcServer"`
 	}
 	if !decodeJSON(w, r, &req) {
 		return
@@ -327,6 +335,9 @@ func (a *App) handlePostConfig(w http.ResponseWriter, r *http.Request) {
 	a.cfg.RoomID = strings.TrimSpace(req.RoomID)
 	if strings.TrimSpace(req.DisplayName) != "" {
 		a.cfg.DisplayName = strings.TrimSpace(req.DisplayName)
+	}
+	if strings.TrimSpace(req.MPVIPCServer) != "" {
+		a.cfg.MPVIPCServer = strings.TrimSpace(req.MPVIPCServer)
 	}
 	cfg := a.cfg
 	enabled := a.syncEnabled
@@ -463,6 +474,7 @@ func (a *App) handleGetMPVCommands(w http.ResponseWriter, r *http.Request) {
 		SyncEnabled: a.syncEnabled,
 		Host:        a.room.Host,
 		ForceSync:   a.room.ForceSync,
+		TrackSync:   a.room.TrackSync,
 		LatestEvent: a.room.Events.Latest,
 		ServerNow:   serverNow,
 	})
@@ -608,6 +620,73 @@ func (a *App) handlePostForceSync(w http.ResponseWriter, r *http.Request) {
 		response["eventId"] = event.EventID
 	}
 	writeJSON(w, http.StatusOK, response)
+}
+
+func (a *App) handlePostTrackSync(w http.ResponseWriter, r *http.Request) {
+	a.mu.RLock()
+	cfg := a.cfg
+	lastLocal := a.lastLocal
+	enabled := a.syncEnabled
+	a.mu.RUnlock()
+	if cfg.Role != protocol.RoleHost {
+		writeJSON(w, http.StatusForbidden, apiError{Error: "track sync is only available for host role"})
+		return
+	}
+	if !enabled || cfg.RoomID == "" {
+		writeJSON(w, http.StatusBadRequest, apiError{Error: "sync must be enabled and room configured"})
+		return
+	}
+
+	now := a.serverNow()
+	trackSync := protocol.TrackSync{
+		SyncID:     fmt.Sprintf("%s_tracks_%d_%06d", cfg.UserID, now, rand.Intn(1000000)),
+		IssuedAt:   now,
+		IssuedBy:   cfg.UserID,
+		AudioID:    strings.TrimSpace(lastLocal.AudioID),
+		SubtitleID: strings.TrimSpace(lastLocal.SubtitleID),
+	}
+	event := a.newRoomEvent(eventTracksSynced, trackSyncMessage(trackSync), cfg.UserID, "success")
+
+	ctx, cancel := context.WithTimeout(r.Context(), 5*time.Second)
+	defer cancel()
+	patch := map[string]any{
+		"trackSync": trackSync,
+		"events": map[string]any{
+			"latest": event,
+		},
+		"updatedAt": now,
+	}
+	if err := a.firebase.Patch(ctx, roomPath(cfg.RoomID), patch, nil); err != nil {
+		writeJSON(w, http.StatusBadGateway, apiError{Error: err.Error()})
+		return
+	}
+
+	a.mu.Lock()
+	a.room.TrackSync = &trackSync
+	a.room.Events.Latest = &event
+	a.mu.Unlock()
+	a.publishState()
+
+	writeJSON(w, http.StatusOK, map[string]any{
+		"trackSync": trackSync,
+		"eventId":   event.EventID,
+		"message":   event.Message,
+	})
+}
+
+func trackSyncMessage(trackSync protocol.TrackSync) string {
+	return fmt.Sprintf("Pushed audio %s and subtitles %s", displayTrackID(trackSync.AudioID), displayTrackID(trackSync.SubtitleID))
+}
+
+func displayTrackID(value string) string {
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return "default"
+	}
+	if value == "no" {
+		return "off"
+	}
+	return value
 }
 
 func decodeForceSyncRequest(w http.ResponseWriter, r *http.Request) (protocol.ParticipantState, bool, string, bool) {
@@ -800,13 +879,14 @@ func (a *App) publishState() {
 	a.mu.RLock()
 	serverNow := protocol.NowMillis() + a.serverTimeOffset
 	payload, err := json.Marshal(map[string]any{
-		"role":        a.cfg.Role,
-		"roomId":      a.cfg.RoomID,
-		"displayName": a.cfg.DisplayName,
-		"userId":      a.cfg.UserID,
-		"syncEnabled": a.syncEnabled,
-		"serverNow":   serverNow,
-		"room":        a.room,
+		"role":         a.cfg.Role,
+		"roomId":       a.cfg.RoomID,
+		"displayName":  a.cfg.DisplayName,
+		"userId":       a.cfg.UserID,
+		"mpvIpcServer": a.cfg.MPVIPCServer,
+		"syncEnabled":  a.syncEnabled,
+		"serverNow":    serverNow,
+		"room":         a.room,
 	})
 	subscribers := make([]chan []byte, 0, len(a.subscribers))
 	for ch := range a.subscribers {
@@ -828,13 +908,14 @@ func (a *App) writeEvent(w http.ResponseWriter, flusher http.Flusher) {
 	a.mu.RLock()
 	serverNow := protocol.NowMillis() + a.serverTimeOffset
 	payload, _ := json.Marshal(map[string]any{
-		"role":        a.cfg.Role,
-		"roomId":      a.cfg.RoomID,
-		"displayName": a.cfg.DisplayName,
-		"userId":      a.cfg.UserID,
-		"syncEnabled": a.syncEnabled,
-		"serverNow":   serverNow,
-		"room":        a.room,
+		"role":         a.cfg.Role,
+		"roomId":       a.cfg.RoomID,
+		"displayName":  a.cfg.DisplayName,
+		"userId":       a.cfg.UserID,
+		"mpvIpcServer": a.cfg.MPVIPCServer,
+		"syncEnabled":  a.syncEnabled,
+		"serverNow":    serverNow,
+		"room":         a.room,
 	})
 	a.mu.RUnlock()
 	fmt.Fprintf(w, "event: state\ndata: %s\n\n", payload)
