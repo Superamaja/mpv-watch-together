@@ -2,12 +2,17 @@ const els = {
   status: document.querySelector("#connectionStatus"),
   statusText: document.querySelector("#statusText"),
   subtitle: document.querySelector("#subtitle"),
+  roomChip: document.querySelector("#roomChip"),
+  roomChipValue: document.querySelector("#roomChipValue"),
   role: document.querySelector("#role"),
   roomId: document.querySelector("#roomId"),
   displayName: document.querySelector("#displayName"),
   saveConfig: document.querySelector("#saveConfig"),
-  toggleSync: document.querySelector("#toggleSync"),
-  toggleSyncLabel: document.querySelector("#toggleSync .btn-toggle-label"),
+  configDrawer: document.querySelector("#configDrawer"),
+  settingsDrawer: document.querySelector("#settingsDrawer"),
+  syncStatus: document.querySelector("#syncStatus"),
+  syncStatusValue: document.querySelector("#syncStatusValue"),
+  syncHint: document.querySelector("#syncHint"),
   forceSync: document.querySelector("#forceSync"),
   pushTracks: document.querySelector("#pushTracks"),
   settingsPanel: document.querySelector("#settingsPanel"),
@@ -27,7 +32,7 @@ const els = {
   hostSeekThreshold: document.querySelector("#hostSeekThreshold"),
   hostSeekCooldown: document.querySelector("#hostSeekCooldown"),
   hostState: document.querySelector("#hostState"),
-  guestHeadingText: document.querySelector("#guestHeadingText"),
+  guestSummary: document.querySelector("#guestSummary"),
   guestList: document.querySelector("#guestList"),
 };
 
@@ -58,6 +63,7 @@ let stateReceivedAt = Date.now();
 let lastRoomEventId = null;
 let eventStreamConnected = null;
 let settingsDirty = false;
+let didInitialDrawerSetup = false;
 
 async function api(path, options = {}) {
   const response = await fetch(path, {
@@ -79,15 +85,23 @@ function render(next) {
   state = next;
   stateReceivedAt = Date.now();
   notifyRoomEvent(state.room?.events?.latest);
+
   els.role.value = state.role || "guest";
   els.roomId.value = state.roomId || "";
   els.displayName.value = state.displayName || "";
-  els.subtitle.textContent = state.roomId ? `Room ${state.roomId}` : "Choose a room to begin";
-  if (els.toggleSyncLabel) els.toggleSyncLabel.textContent = state.syncEnabled ? "Sync On" : "Sync Off";
-  els.toggleSync.classList.toggle("is-on", !!state.syncEnabled);
-  els.toggleSync.setAttribute("aria-pressed", String(!!state.syncEnabled));
-  els.forceSync.disabled = state.role !== "host" || !state.syncEnabled;
-  els.pushTracks.disabled = state.role !== "host" || !state.syncEnabled;
+
+  const hasRoom = !!state.roomId;
+  els.subtitle.textContent = hasRoom ? "Local host dashboard" : "Choose a room to begin";
+  els.roomChip.hidden = !hasRoom;
+  els.roomChipValue.textContent = state.roomId || "";
+
+  const synced = !!state.syncEnabled;
+  els.syncStatus.classList.toggle("is-on", synced);
+  els.syncStatusValue.textContent = synced ? "Synced" : "Not synced";
+  els.syncHint.textContent = syncHintText(state, synced);
+
+  els.forceSync.disabled = state.role !== "host" || !synced;
+  els.pushTracks.disabled = state.role !== "host" || !synced;
   renderSettings(next.room?.settings);
 
   const host = state.room?.host;
@@ -96,12 +110,29 @@ function render(next) {
   const guests = Object.entries(state.room?.guests || {});
   const onlineCount = guests.filter(([, guest]) => !isStale(guest)).length;
   const offlineCount = guests.length - onlineCount;
-  if (els.guestHeadingText) {
-    els.guestHeadingText.textContent = `Guests · ${onlineCount} online · ${offlineCount} offline`;
-  }
+  els.guestSummary.innerHTML = guests.length
+    ? `<span class="count-chip is-online">${onlineCount} online</span>` +
+      (offlineCount ? `<span class="count-chip is-offline">${offlineCount} offline</span>` : "")
+    : "";
   els.guestList.innerHTML = guests.length
     ? guests.map(([userId, guest]) => guestRow(userId, guest, state.room?.host)).join("")
     : `<div class="empty">No synced guests yet.</div>`;
+
+  setupInitialDrawers(hasRoom);
+}
+
+function syncHintText(state, synced) {
+  if (state.role !== "host") return "Switch role to host to control the room.";
+  if (!state.roomId) return "Set a room in Room Configuration to begin.";
+  return synced
+    ? "You are hosting. Guests follow your playback."
+    : "Turn sync on in mpv (Ctrl+W) to start hosting.";
+}
+
+function setupInitialDrawers(hasRoom) {
+  if (didInitialDrawerSetup) return;
+  didInitialDrawerSetup = true;
+  if (!hasRoom) els.configDrawer.open = true;
 }
 
 function effectiveSettings(settings) {
@@ -201,10 +232,10 @@ function hostCard(host) {
       <div class="progress"><div class="progress-fill" style="width:${pct}%"></div></div>
     </div>
     <dl class="facts">
-      <dt>Last sync</dt><dd>${escapeHTML(formatWallTime(state.room?.forceSync?.issuedAt))}</dd>
-      <dt>Audio</dt><dd>${escapeHTML(formatTrackID(host.aid))}</dd>
-      <dt>Subtitles</dt><dd>${escapeHTML(formatTrackID(host.sid))}</dd>
-      <dt>Last seen</dt><dd>${escapeHTML(formatAge(host.lastSeen))}</dd>
+      <div class="fact"><dt>Last sync</dt><dd>${escapeHTML(formatWallTime(state.room?.forceSync?.issuedAt))}</dd></div>
+      <div class="fact"><dt>Last seen</dt><dd>${escapeHTML(formatAge(host.lastSeen))}</dd></div>
+      <div class="fact"><dt>Audio</dt><dd>${escapeHTML(formatTrackID(host.aid))}</dd></div>
+      <div class="fact"><dt>Subtitles</dt><dd>${escapeHTML(formatTrackID(host.sid))}</dd></div>
     </dl>
   `;
 }
@@ -374,17 +405,6 @@ els.saveConfig.addEventListener("click", async () => {
       }),
     });
     setStatus("Saved");
-  } catch (error) {
-    setStatus(error.message, false);
-  }
-});
-
-els.toggleSync.addEventListener("click", async () => {
-  try {
-    await api("/api/sync", {
-      method: "POST",
-      body: JSON.stringify({ enabled: !state.syncEnabled }),
-    });
   } catch (error) {
     setStatus(error.message, false);
   }

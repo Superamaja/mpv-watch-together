@@ -23,120 +23,214 @@
             </svg>
           </span>
           <div class="brand-text">
-            <h1>mpv Watch Together</h1>
+            <h1>Watch Together</h1>
             <p id="subtitle">Local host dashboard</p>
           </div>
         </div>
-        <div class="status" id="connectionStatus" role="status" aria-live="polite">
-          <span class="status-dot" aria-hidden="true"></span>
-          <span class="status-text" id="statusText">Connecting</span>
+        <div class="topbar-meta">
+          <span class="room-chip" id="roomChip" hidden>
+            <span class="room-chip-label">Room</span>
+            <span class="room-chip-value" id="roomChipValue"></span>
+          </span>
+          <div class="status" id="connectionStatus" role="status" aria-live="polite">
+            <span class="status-dot" aria-hidden="true"></span>
+            <span class="status-text" id="statusText">Connecting</span>
+          </div>
         </div>
       </header>
 
-      <section class="controls panel">
-        <div class="field-group">
-          <label class="field">
-            <span>Role</span>
-            <select id="role">
-              <option value="host">Host</option>
-              <option value="guest">Guest</option>
-            </select>
-          </label>
-          <label class="field">
-            <span>Room</span>
-            <input id="roomId" placeholder="room123" />
-          </label>
-          <label class="field">
-            <span>Display name</span>
-            <input id="displayName" placeholder="Movie night" />
-          </label>
+      <!-- Command bar: the controls the host reaches for most often -->
+      <section class="command-bar panel">
+        <div class="sync-control">
+          <div class="sync-status is-off" id="syncStatus" role="status" aria-live="polite">
+            <span class="sync-status-dot" aria-hidden="true"></span>
+            <span class="sync-status-text">
+              <span class="sync-status-label">Sync</span>
+              <span class="sync-status-value" id="syncStatusValue">Not synced</span>
+            </span>
+          </div>
+          <p class="sync-hint" id="syncHint">Turn sync on in mpv (Ctrl+W) to start hosting.</p>
         </div>
-        <div class="actions">
-          <button id="saveConfig" class="btn btn-ghost" type="button">Save</button>
-          <button id="toggleSync" class="btn btn-toggle" type="button" aria-pressed="false">
-            <span class="btn-toggle-dot" aria-hidden="true"></span>
-            <span class="btn-toggle-label">Sync Off</span>
+        <div class="command-actions">
+          <button id="forceSync" class="btn btn-primary" type="button" data-tip="Snap every synced guest to your exact playback position and play/pause state right now.">
+            <svg viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
+              <path d="M4 12a8 8 0 0114-5.3M20 12a8 8 0 01-14 5.3" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" />
+              <path d="M18 3v4h-4M6 21v-4h4" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" />
+            </svg>
+            Force Sync
           </button>
-          <button id="forceSync" class="btn btn-accent" type="button">Force Sync</button>
-          <button id="pushTracks" class="btn btn-accent" type="button">Push Tracks</button>
+          <button id="pushTracks" class="btn btn-secondary" type="button" data-tip="Send your current audio and subtitle track selection to all synced guests.">
+            <svg viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
+              <path d="M4 7h10M4 12h10M4 17h6" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" />
+              <path d="M17 8v8l5-4z" fill="currentColor" />
+            </svg>
+            Push Tracks
+          </button>
         </div>
       </section>
 
-      <section class="settings-panel panel" id="settingsPanel">
-        <div class="settings-head">
-          <h2 class="panel-title">Room Settings</h2>
-          <div class="settings-actions">
-            <button id="settingsHelp" class="btn btn-ghost" type="button">How It Works</button>
-            <button id="resetSettings" class="btn btn-ghost" type="button">Reset</button>
-            <button id="saveSettings" class="btn btn-ghost" type="button">Save Settings</button>
+      <!-- Live monitoring: the two things the host actually watches -->
+      <section class="grid">
+        <article class="panel host-panel">
+          <header class="panel-head">
+            <h2 class="panel-title">
+              <span class="panel-title-icon" aria-hidden="true">
+                <svg viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+                  <path d="M8 6.5l9 5.5-9 5.5z" fill="currentColor" />
+                </svg>
+              </span>
+              Now Playing
+            </h2>
+          </header>
+          <div id="hostState" class="host-state"></div>
+        </article>
+
+        <article class="panel guests-panel">
+          <header class="panel-head">
+            <h2 class="panel-title">
+              <span class="panel-title-icon" aria-hidden="true">
+                <svg viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+                  <path
+                    d="M9 11a3 3 0 100-6 3 3 0 000 6zM3 19a6 6 0 0112 0M16.5 11a3 3 0 10-2-5.2M21 19a6 6 0 00-4.5-5.8"
+                    stroke="currentColor"
+                    stroke-width="1.6"
+                    stroke-linecap="round"
+                  />
+                </svg>
+              </span>
+              Roster
+            </h2>
+            <div class="roster-summary" id="guestSummary"></div>
+          </header>
+          <div id="guestList" class="guest-list"></div>
+        </article>
+      </section>
+
+      <!-- Rarely touched: tucked into collapsible sections -->
+      <details class="drawer" id="configDrawer">
+        <summary class="drawer-summary">
+          <span class="drawer-summary-main">
+            <span class="drawer-title">Room Configuration</span>
+            <span class="drawer-sub">Role, room code, and display name</span>
+          </span>
+          <span class="drawer-chevron" aria-hidden="true">
+            <svg viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+              <path d="M6 9l6 6 6-6" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" />
+            </svg>
+          </span>
+        </summary>
+        <div class="drawer-body">
+          <div class="config-grid">
+            <label class="field">
+              <span>Role</span>
+              <select id="role">
+                <option value="host">Host</option>
+                <option value="guest">Guest</option>
+              </select>
+            </label>
+            <label class="field">
+              <span>Room</span>
+              <input id="roomId" placeholder="room123" />
+            </label>
+            <label class="field">
+              <span>Display name</span>
+              <input id="displayName" placeholder="Movie night" />
+            </label>
+            <div class="config-actions">
+              <button id="saveConfig" class="btn btn-secondary" type="button">Save</button>
+            </div>
           </div>
         </div>
-        <div class="settings-sections">
-          <fieldset class="settings-group">
-            <legend>Baseline Polling</legend>
-            <div class="settings-grid">
-              <label class="field" title="How often synced mpv clients ask the helper for commands when adaptive polling is off.">
-                <span>Command poll</span>
-                <input id="commandInterval" type="number" min="0.25" max="3" step="0.05" title="Fixed command polling interval in seconds." />
-              </label>
-            </div>
-          </fieldset>
+      </details>
 
-          <fieldset class="settings-group">
-            <legend>Adaptive Polling</legend>
-            <div class="settings-grid">
-              <label class="check-field" title="Use faster polling around sync activity and slower polling while idle.">
-                <input id="adaptivePolling" type="checkbox" title="Toggle adaptive command polling for synced mpv clients." />
-                <span>Adaptive polling</span>
-              </label>
-              <label class="field" title="Polling interval used when no recent sync activity is happening.">
-                <span>Idle poll</span>
-                <input id="idleInterval" type="number" min="0.5" max="5" step="0.05" title="Idle adaptive polling interval in seconds." />
-              </label>
-              <label class="field" title="Polling interval used briefly after sync starts, force sync, track sync, or host snap activity.">
-                <span>Active poll</span>
-                <input id="activeInterval" type="number" min="0.25" max="2" step="0.05" title="Active adaptive polling interval in seconds." />
-              </label>
-              <label class="field" title="Maximum polling delay while a client is reconnecting to the helper.">
-                <span>Reconnect max</span>
-                <input id="reconnectBackoffMax" type="number" min="1" max="15" step="0.25" title="Maximum reconnect polling backoff in seconds." />
-              </label>
+      <details class="drawer" id="settingsDrawer">
+        <summary class="drawer-summary">
+          <span class="drawer-summary-main">
+            <span class="drawer-title">Room Settings</span>
+            <span class="drawer-sub">Polling cadence and sync behavior</span>
+          </span>
+          <span class="drawer-chevron" aria-hidden="true">
+            <svg viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+              <path d="M6 9l6 6 6-6" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" />
+            </svg>
+          </span>
+        </summary>
+        <div class="drawer-body" id="settingsPanel">
+          <div class="settings-toolbar">
+            <p class="settings-note">Settings sync to every mpv client through the existing command poll.</p>
+            <div class="settings-actions">
+              <button id="settingsHelp" class="btn btn-ghost" type="button">How It Works</button>
+              <button id="resetSettings" class="btn btn-ghost" type="button">Reset</button>
+              <button id="saveSettings" class="btn btn-secondary" type="button">Save Settings</button>
             </div>
-          </fieldset>
+          </div>
+          <div class="settings-sections">
+            <fieldset class="settings-group">
+              <legend>Baseline Polling</legend>
+              <div class="settings-grid">
+                <label class="field" data-tip="How often synced mpv clients ask the helper for commands when adaptive polling is off.">
+                  <span>Command poll</span>
+                  <input id="commandInterval" type="number" min="0.25" max="3" step="0.05" />
+                </label>
+              </div>
+            </fieldset>
 
-          <fieldset class="settings-group">
-            <legend>Sync Behavior</legend>
-            <div class="settings-grid">
-              <label class="check-field" title="Keep guests snapped to the host if they seek too far away.">
-                <input id="seekLock" type="checkbox" title="Toggle guest seek-lock behavior." />
-                <span>Seek lock</span>
-              </label>
-              <label class="field" title="How far a guest can drift from the host before seek-lock snaps them back.">
-                <span>Seek lock gap</span>
-                <input id="seekLockThreshold" type="number" min="0.5" max="10" step="0.1" title="Guest seek-lock threshold in seconds." />
-              </label>
-              <label class="check-field" title="Send an automatic force sync when the host seeks far enough.">
-                <input id="autoForceSyncOnSeek" type="checkbox" title="Toggle host auto-sync after seeking." />
-                <span>Auto sync seek</span>
-              </label>
-              <label class="field" title="How large a host seek must be before auto-sync triggers.">
-                <span>Host seek gap</span>
-                <input id="hostSeekThreshold" type="number" min="0.5" max="10" step="0.1" title="Host seek auto-sync threshold in seconds." />
-              </label>
-              <label class="field" title="Minimum time between host auto-sync events after seeks.">
-                <span>Seek cooldown</span>
-                <input id="hostSeekCooldown" type="number" min="0.25" max="10" step="0.25" title="Host seek auto-sync cooldown in seconds." />
-              </label>
-            </div>
-          </fieldset>
+            <fieldset class="settings-group">
+              <legend>Adaptive Polling</legend>
+              <div class="settings-grid">
+                <label class="check-field" data-tip="Use faster polling around sync activity and slower polling while idle.">
+                  <input id="adaptivePolling" type="checkbox" />
+                  <span>Adaptive polling</span>
+                </label>
+                <label class="field" data-tip="Polling interval used when no recent sync activity is happening.">
+                  <span>Idle poll</span>
+                  <input id="idleInterval" type="number" min="0.5" max="5" step="0.05" />
+                </label>
+                <label class="field" data-tip="Polling interval used briefly after sync starts, force sync, track sync, or host snap activity.">
+                  <span>Active poll</span>
+                  <input id="activeInterval" type="number" min="0.25" max="2" step="0.05" />
+                </label>
+                <label class="field" data-tip="Maximum polling delay while a client is reconnecting to the helper.">
+                  <span>Reconnect max</span>
+                  <input id="reconnectBackoffMax" type="number" min="1" max="15" step="0.25" />
+                </label>
+              </div>
+            </fieldset>
+
+            <fieldset class="settings-group">
+              <legend>Sync Behavior</legend>
+              <div class="settings-grid">
+                <label class="check-field" data-tip="Keep guests snapped to the host if they seek too far away.">
+                  <input id="seekLock" type="checkbox" />
+                  <span>Seek lock</span>
+                </label>
+                <label class="field" data-tip="How far a guest can drift from the host before seek-lock snaps them back.">
+                  <span>Seek lock gap</span>
+                  <input id="seekLockThreshold" type="number" min="0.5" max="10" step="0.1" />
+                </label>
+                <label class="check-field" data-tip="Send an automatic force sync when the host seeks far enough.">
+                  <input id="autoForceSyncOnSeek" type="checkbox" />
+                  <span>Auto sync seek</span>
+                </label>
+                <label class="field" data-tip="How large a host seek must be before auto-sync triggers.">
+                  <span>Host seek gap</span>
+                  <input id="hostSeekThreshold" type="number" min="0.5" max="10" step="0.1" />
+                </label>
+                <label class="field" data-tip="Minimum time between host auto-sync events after seeks.">
+                  <span>Seek cooldown</span>
+                  <input id="hostSeekCooldown" type="number" min="0.25" max="10" step="0.25" />
+                </label>
+              </div>
+            </fieldset>
+          </div>
         </div>
-      </section>
+      </details>
 
       <div class="modal-backdrop" id="settingsHelpModal" hidden>
         <section class="modal" role="dialog" aria-modal="true" aria-labelledby="settingsHelpTitle">
           <div class="modal-head">
             <h2 id="settingsHelpTitle">Room Settings Details</h2>
-            <button id="closeSettingsHelp" class="icon-button" type="button">Close</button>
+            <button id="closeSettingsHelp" class="modal-close" type="button" aria-label="Close">&times;</button>
           </div>
           <div class="modal-body">
             <section class="help-section">
@@ -168,36 +262,6 @@
           </div>
         </section>
       </div>
-
-      <section class="grid">
-        <article class="panel host-panel">
-          <h2 class="panel-title">
-            <span class="panel-title-icon" aria-hidden="true">
-              <svg viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
-                <path d="M8 6.5l9 5.5-9 5.5z" fill="currentColor" />
-              </svg>
-            </span>
-            Now Playing
-          </h2>
-          <div id="hostState" class="host-state"></div>
-        </article>
-        <article class="panel">
-          <h2 class="panel-title" id="guestHeading">
-            <span class="panel-title-icon" aria-hidden="true">
-              <svg viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
-                <path
-                  d="M9 11a3 3 0 100-6 3 3 0 000 6zM3 19a6 6 0 0112 0M16.5 11a3 3 0 10-2-5.2M21 19a6 6 0 00-4.5-5.8"
-                  stroke="currentColor"
-                  stroke-width="1.6"
-                  stroke-linecap="round"
-                />
-              </svg>
-            </span>
-            <span id="guestHeadingText">Guests</span>
-          </h2>
-          <div id="guestList" class="guest-list"></div>
-        </article>
-      </section>
     </main>
     <script src="/app.js"></script>
   </body>

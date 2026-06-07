@@ -112,7 +112,7 @@ Open the host dashboard:
 http://127.0.0.1:8765
 ```
 
-The dashboard should show the configured room, host role, Sync toggle, Force Sync button, host state, and guest list.
+The dashboard should show the configured room, a read-only sync status indicator, Force Sync and Push Tracks buttons, the host "Now Playing" state, and the guest roster. Sync is turned on or off from mpv (`Ctrl+w`), not the dashboard.
 
 Guest helpers intentionally do not serve the dashboard. If a guest opens `http://127.0.0.1:8765`, they should see a short message telling them to use mpv controls instead.
 
