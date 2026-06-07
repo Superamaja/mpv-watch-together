@@ -1,0 +1,61 @@
+# mpv Watch Together - {{ .RoleTitle }}
+
+## Bundle contents
+
+| File | What it is |
+|---|---|
+| {{ .BinaryName }} | Helper process - run this |
+| scripts/mpv-watch.lua | mpv Lua script - copy to your scripts folder |
+| script-opts/mpv-watch.conf | Script options - copy to your script-opts folder |
+{{- if .IsDarwin }}
+| install-mpv-files.sh | macOS installer that copies scripts/ and script-opts/ into ~/.config/mpv |
+| run-helper.sh | macOS launcher that sets the executable bit and starts the helper |
+{{- end }}
+
+## Install
+
+### 1. Copy the mpv files
+
+{{ if .IsDarwin -}}
+Run the installer from this bundle:
+
+```sh
+sh ./install-mpv-files.sh
+```
+
+Or copy these files manually:
+{{- else }}
+Copy these files:
+{{- end }}
+
+- **scripts/mpv-watch.lua** -> {{ .ScriptsDir }}
+- **script-opts/mpv-watch.conf** -> {{ .OptsDir }}
+{{ if .IsWindows }}
+> **Portable mpv install?** Use the `portable_config\scripts\` and
+> `portable_config\script-opts\` folders next to your mpv executable instead.
+{{ else }}
+> **Finding the folder in Finder:** press **Shift + Command + G**, type `~/.config/mpv`, and press Enter.
+
+> **Portable mpv install?** Use the `portable_config/scripts/` and
+> `portable_config/script-opts/` folders next to your mpv executable instead.
+{{ end }}
+### 2. Start the helper
+
+Open a terminal in this folder and run:
+
+{{ .RunCommand }}
+
+Keep this window open while watching.
+
+### 3. Open mpv and press Ctrl+w
+
+{{ if .IsGuest -}}
+## Guest Controls
+
+Guests do not use a browser dashboard. Keep the helper running in the background and use mpv's **Ctrl+w** menu to change room, set your name, and toggle sync.
+{{ else -}}
+## Host Dashboard
+
+Open http://127.0.0.1:8765 in your browser once the helper is running.
+The dashboard shows room state, connected guests, sync controls, and lets you force-sync or remove stale guests.
+{{ end }}

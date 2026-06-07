@@ -214,6 +214,7 @@ helper/internal/protocol           shared room payload types
 helper/internal/server             local HTTP API and dashboard server
 helper/web/static                  host dashboard assets
 tools/build                        release bundle builder
+tools/build/templates              release bundle file templates
 scripts                            build/test wrappers
 archive/stremio-userscript         old Stremio userscript project
 ```

@@ -3,6 +3,7 @@ package main
 import (
 	"archive/zip"
 	"bufio"
+	"bytes"
 	"errors"
 	"flag"
 	"fmt"
@@ -10,12 +11,28 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strings"
+	"text/template"
 )
 
 type target struct {
 	OS   string
 	Arch string
+}
+
+type bundleTemplateData struct {
+	Role        string
+	RoleTitle   string
+	Room        string
+	DisplayName string
+	BinaryName  string
+	ScriptsDir  string
+	OptsDir     string
+	RunCommand  string
+	IsDarwin    bool
+	IsGuest     bool
+	IsWindows   bool
 }
 
 func main() {
@@ -132,31 +149,95 @@ func writeBundle(outDir string, target target, role string, displayName string, 
 	if err := copyFile(filepath.Join("clients", "mpv", "mpv-watch.lua"), filepath.Join(scriptsDir, "mpv-watch.lua"), 0o644); err != nil {
 		return "", err
 	}
-	if err := os.WriteFile(filepath.Join(optsDir, "mpv-watch.conf"), []byte(configFile(role, room, displayName)), 0o644); err != nil {
+
+	data := newBundleTemplateData(role, target, displayName, room, binaryName)
+	if err := writeTemplateFile(filepath.Join(optsDir, "mpv-watch.conf"), "mpv-watch.conf.tmpl", data, 0o644); err != nil {
 		return "", err
 	}
 	if target.OS == "darwin" {
-		if err := writeMacScripts(bundleDir, binaryName); err != nil {
+		if err := writeMacScripts(bundleDir, data); err != nil {
 			return "", err
 		}
 	}
-	if err := os.WriteFile(filepath.Join(bundleDir, "QUICKSTART.md"), []byte(quickstart(role, target, binaryName)), 0o644); err != nil {
+	if err := writeTemplateFile(filepath.Join(bundleDir, "QUICKSTART.md"), "QUICKSTART.md.tmpl", data, 0o644); err != nil {
 		return "", err
 	}
 	return bundleDir, nil
 }
 
-func writeMacScripts(bundleDir string, binaryName string) error {
-	files := map[string]string{
-		"install-mpv-files.sh": macInstallScript(),
-		"run-helper.sh":        macRunScript(binaryName),
+func newBundleTemplateData(role string, target target, displayName string, room string, binaryName string) bundleTemplateData {
+	data := bundleTemplateData{
+		Role:        role,
+		RoleTitle:   title(role),
+		Room:        room,
+		DisplayName: displayName,
+		BinaryName:  binaryName,
+		ScriptsDir:  "~/.config/mpv/scripts/",
+		OptsDir:     "~/.config/mpv/script-opts/",
+		RunCommand:  "./" + binaryName,
+		IsDarwin:    target.OS == "darwin",
+		IsGuest:     role == "guest",
+		IsWindows:   target.OS == "windows",
 	}
-	for name, content := range files {
-		if err := os.WriteFile(filepath.Join(bundleDir, name), []byte(content), 0o755); err != nil {
+	if data.IsWindows {
+		data.ScriptsDir = `%APPDATA%\mpv\scripts\`
+		data.OptsDir = `%APPDATA%\mpv\script-opts\`
+		data.RunCommand = `.\` + binaryName
+	}
+	if data.IsDarwin {
+		data.RunCommand = "sh ./run-helper.sh"
+	}
+	return data
+}
+
+func writeMacScripts(bundleDir string, data bundleTemplateData) error {
+	files := map[string]string{
+		"install-mpv-files.sh": "install-mpv-files.sh.tmpl",
+		"run-helper.sh":        "run-helper.sh.tmpl",
+	}
+	for name, templateName := range files {
+		if err := writeTemplateFile(filepath.Join(bundleDir, name), templateName, data, 0o755); err != nil {
 			return err
 		}
 	}
 	return nil
+}
+
+func writeTemplateFile(path string, templateName string, data bundleTemplateData, mode os.FileMode) error {
+	content, err := renderTemplate(templateName, data)
+	if err != nil {
+		return err
+	}
+	return os.WriteFile(path, []byte(content), mode)
+}
+
+func renderTemplate(templateName string, data bundleTemplateData) (string, error) {
+	templatePath, err := buildTemplatePath(templateName)
+	if err != nil {
+		return "", err
+	}
+	content, err := os.ReadFile(templatePath)
+	if err != nil {
+		return "", err
+	}
+
+	tmpl, err := template.New(templateName).Option("missingkey=error").Parse(string(content))
+	if err != nil {
+		return "", err
+	}
+	var output bytes.Buffer
+	if err := tmpl.Execute(&output, data); err != nil {
+		return "", err
+	}
+	return output.String(), nil
+}
+
+func buildTemplatePath(templateName string) (string, error) {
+	_, sourcePath, _, ok := runtime.Caller(0)
+	if !ok {
+		return "", errors.New("could not locate build source path")
+	}
+	return filepath.Join(filepath.Dir(sourcePath), "templates", templateName), nil
 }
 
 func copyFile(src string, dst string, mode os.FileMode) error {
@@ -260,141 +341,6 @@ func safeRemove(path string) error {
 		return fmt.Errorf("refusing to remove path outside repository: %s", path)
 	}
 	return os.RemoveAll(absolutePath)
-}
-
-func configFile(role string, room string, displayName string) string {
-	return fmt.Sprintf(`helper_url=http://127.0.0.1:8765
-role=%s
-room=%s
-display_name=%s
-sync_on_start=no
-state_interval=0.5
-command_interval=0.2
-seek_lock=yes
-seek_lock_threshold=3.0
-auto_force_sync_on_seek=yes
-host_seek_threshold=2.5
-host_seek_cooldown=1.5
-`, role, room, displayName)
-}
-
-func macInstallScript() string {
-	return `#!/usr/bin/env sh
-set -eu
-
-: "${HOME:?HOME is required to find ~/.config/mpv}"
-
-bundle_dir="$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)"
-mpv_config_dir="${MPV_CONFIG_DIR:-$HOME/.config/mpv}"
-
-mkdir -p "$mpv_config_dir/scripts" "$mpv_config_dir/script-opts"
-
-cp -R "$bundle_dir/scripts/." "$mpv_config_dir/scripts/"
-cp -R "$bundle_dir/script-opts/." "$mpv_config_dir/script-opts/"
-
-printf 'Installed mpv Watch Together files to %s\n' "$mpv_config_dir"
-printf 'Copied scripts/ to %s/scripts\n' "$mpv_config_dir"
-printf 'Copied script-opts/ to %s/script-opts\n' "$mpv_config_dir"
-`
-}
-
-func macRunScript(binaryName string) string {
-	return fmt.Sprintf(`#!/usr/bin/env sh
-set -eu
-
-bundle_dir="$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)"
-helper="$bundle_dir/%s"
-
-if [ ! -f "$helper" ]; then
-	printf 'Could not find helper binary at %%s\n' "$helper" >&2
-	exit 1
-fi
-
-chmod +x "$helper"
-exec "$helper" "$@"
-`, binaryName)
-}
-
-func quickstart(role string, target target, binaryName string) string {
-	var scriptsDir, optsDir, runCommand string
-	var installIntro, extraBundleRows string
-	if target.OS == "windows" {
-		scriptsDir = `%APPDATA%\mpv\scripts\`
-		optsDir = `%APPDATA%\mpv\script-opts\`
-		runCommand = `.\` + binaryName
-		installIntro = "Copy these files:"
-	} else {
-		scriptsDir = "~/.config/mpv/scripts/"
-		optsDir = "~/.config/mpv/script-opts/"
-		runCommand = "./" + binaryName
-		installIntro = "Copy these files:"
-		if target.OS == "darwin" {
-			runCommand = "sh ./run-helper.sh"
-			installIntro = "Run the installer from this bundle:\n\n```sh\nsh ./install-mpv-files.sh\n```\n\nOr copy these files manually:"
-			extraBundleRows = "| install-mpv-files.sh | macOS installer that copies scripts/ and script-opts/ into ~/.config/mpv |\n| run-helper.sh | macOS launcher that sets the executable bit and starts the helper |\n"
-		}
-	}
-
-	var accessNote, portableNote string
-	if target.OS == "windows" {
-		portableNote = `
-> **Portable mpv install?** Use the ` + "`portable_config\\scripts\\`" + ` and
-> ` + "`portable_config\\script-opts\\`" + ` folders next to your mpv executable instead.
-`
-	} else {
-		accessNote = `
-> **Finding the folder in Finder:** press **Shift + Command + G**, type ` + "`~/.config/mpv`" + `, and press Enter.
-`
-		portableNote = `
-> **Portable mpv install?** Use the ` + "`portable_config/scripts/`" + ` and
-> ` + "`portable_config/script-opts/`" + ` folders next to your mpv executable instead.
-`
-	}
-
-	dashboard := `## Host Dashboard
-
-Open http://127.0.0.1:8765 in your browser once the helper is running.
-The dashboard shows room state, connected guests, sync controls, and lets you force-sync or remove stale guests.
-`
-	if role == "guest" {
-		dashboard = `## Guest Controls
-
-Guests do not use a browser dashboard. Keep the helper running in the background and use mpv's **Ctrl+w** menu to change room, set your name, and toggle sync.
-`
-	}
-
-	return fmt.Sprintf(`# mpv Watch Together — %s
-
-## Bundle contents
-
-| File | What it is |
-|---|---|
-| %s | Helper process — run this |
-| scripts/mpv-watch.lua | mpv Lua script — copy to your scripts folder |
-| script-opts/mpv-watch.conf | Script options — copy to your script-opts folder |
-%s
-
-## Install
-
-### 1. Copy the mpv files
-
-%s
-
-- **scripts/mpv-watch.lua** → %s
-- **script-opts/mpv-watch.conf** → %s
-%s%s
-### 2. Start the helper
-
-Open a terminal in this folder and run:
-
-%s
-
-Keep this window open while watching.
-
-### 3. Open mpv and press Ctrl+w
-
-%s
-`, title(role), binaryName, extraBundleRows, installIntro, scriptsDir, optsDir, accessNote, portableNote, runCommand, dashboard)
 }
 
 func parseTargets(value string) ([]target, error) {
