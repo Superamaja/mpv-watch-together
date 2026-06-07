@@ -368,6 +368,17 @@ local function apply_remote_state(state, force)
     applying_remote_pause = false
 end
 
+local function display_track_id(value)
+    value = trim(tostring(value or ""))
+    if value == "" then
+        return "default"
+    end
+    if value == "no" then
+        return "off"
+    end
+    return value
+end
+
 local function apply_track_sync(track_sync)
     if not sync_enabled or opts.role == "host" or not track_sync then
         return
@@ -379,7 +390,7 @@ local function apply_track_sync(track_sync)
     if track_sync.sid ~= nil and tostring(track_sync.sid) ~= "" then
         mp.set_property("sid", tostring(track_sync.sid))
     end
-    mp.osd_message("Watch Together: audio/subtitles synced")
+    mp.osd_message("Watch Together: received tracks - audio " .. display_track_id(track_sync.aid) .. ", subtitles " .. display_track_id(track_sync.sid))
 end
 
 poll_commands = function()
