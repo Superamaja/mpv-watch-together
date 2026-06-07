@@ -117,18 +117,22 @@ func writeBundle(outDir string, target target, role string, displayName string, 
 	if err := safeRemove(bundleDir); err != nil {
 		return "", err
 	}
-	if err := os.MkdirAll(bundleDir, 0o755); err != nil {
-		return "", err
+	scriptsDir := filepath.Join(bundleDir, "scripts")
+	optsDir := filepath.Join(bundleDir, "script-opts")
+	for _, dir := range []string{scriptsDir, optsDir} {
+		if err := os.MkdirAll(dir, 0o755); err != nil {
+			return "", err
+		}
 	}
 
 	binaryName := filepath.Base(binaryPath)
 	if err := copyFile(binaryPath, filepath.Join(bundleDir, binaryName), 0o755); err != nil {
 		return "", err
 	}
-	if err := copyFile(filepath.Join("clients", "mpv", "mpv-watch.lua"), filepath.Join(bundleDir, "mpv-watch.lua"), 0o644); err != nil {
+	if err := copyFile(filepath.Join("clients", "mpv", "mpv-watch.lua"), filepath.Join(scriptsDir, "mpv-watch.lua"), 0o644); err != nil {
 		return "", err
 	}
-	if err := os.WriteFile(filepath.Join(bundleDir, "mpv-watch.conf"), []byte(configFile(role, room, displayName)), 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(optsDir, "mpv-watch.conf"), []byte(configFile(role, room, displayName)), 0o644); err != nil {
 		return "", err
 	}
 	if err := os.WriteFile(filepath.Join(bundleDir, "QUICKSTART.md"), []byte(quickstart(role, target, binaryName)), 0o644); err != nil {
@@ -268,15 +272,18 @@ func quickstart(role string, target target, binaryName string) string {
 		runCommand = "./" + binaryName
 	}
 
-	portableNote := ""
+	var accessNote, portableNote string
 	if target.OS == "windows" {
 		portableNote = `
-> **Portable mpv install?** Place the files in the ` + "`portable_config\\scripts\\`" + ` and
+> **Portable mpv install?** Use the ` + "`portable_config\\scripts\\`" + ` and
 > ` + "`portable_config\\script-opts\\`" + ` folders next to your mpv executable instead.
 `
 	} else {
+		accessNote = `
+> **Finding the folder in Finder:** press **Shift + Command + G**, type ` + "`~/.config/mpv`" + `, and press Enter.
+`
 		portableNote = `
-> **Portable mpv install?** Place the files in the ` + "`portable_config/scripts/`" + ` and
+> **Portable mpv install?** Use the ` + "`portable_config/scripts/`" + ` and
 > ` + "`portable_config/script-opts/`" + ` folders next to your mpv executable instead.
 `
 	}
@@ -300,16 +307,16 @@ Guests do not use a browser dashboard. Keep the helper running in the background
 | File | What it is |
 |---|---|
 | %s | Helper process — run this |
-| mpv-watch.lua | mpv Lua script — copy to your scripts folder |
-| mpv-watch.conf | Script options — copy to your script-opts folder |
+| scripts/mpv-watch.lua | mpv Lua script — copy to your scripts folder |
+| script-opts/mpv-watch.conf | Script options — copy to your script-opts folder |
 
 ## Install
 
 ### 1. Copy the mpv files
 
-- **mpv-watch.lua** → %s
-- **mpv-watch.conf** → %s
-%s
+- **scripts/mpv-watch.lua** → %s
+- **script-opts/mpv-watch.conf** → %s
+%s%s
 ### 2. Start the helper
 
 Open a terminal in this folder and run:
@@ -321,7 +328,7 @@ Keep this window open while watching.
 ### 3. Open mpv and press Ctrl+w
 
 %s
-`, title(role), binaryName, scriptsDir, optsDir, portableNote, runCommand, dashboard)
+`, title(role), binaryName, scriptsDir, optsDir, accessNote, portableNote, runCommand, dashboard)
 }
 
 func parseTargets(value string) ([]target, error) {

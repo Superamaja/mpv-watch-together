@@ -54,9 +54,9 @@ def check_required_files() -> None:
     required = {
         "host helper binary": HOST_BUNDLE / "mpv-watch-helper.exe",
         "guest helper binary": GUEST_BUNDLE / "mpv-watch-helper.exe",
-        "Lua script": HOST_BUNDLE / "mpv-watch.lua",
-        "host script-opts conf": HOST_BUNDLE / "mpv-watch.conf",
-        "guest script-opts conf": GUEST_BUNDLE / "mpv-watch.conf",
+        "Lua script": HOST_BUNDLE / "scripts" / "mpv-watch.lua",
+        "host script-opts conf": HOST_BUNDLE / "script-opts" / "mpv-watch.conf",
+        "guest script-opts conf": GUEST_BUNDLE / "script-opts" / "mpv-watch.conf",
         "video file": VIDEO_PATH,
     }
     missing = {label: path for label, path in required.items() if not path.exists()}
@@ -88,9 +88,9 @@ def _install(src: Path, dst: Path) -> None:
 def install_mpv_files() -> None:
     print("\n[install] mpv script + conf")
     # Both bundles ship the same Lua script; use the host copy.
-    _install(HOST_BUNDLE / "mpv-watch.lua", MPV_SCRIPTS_DIR / "mpv-watch.lua")
+    _install(HOST_BUNDLE / "scripts" / "mpv-watch.lua", MPV_SCRIPTS_DIR / "mpv-watch.lua")
     # Install host conf as the baseline (guest overrides via --script-opts).
-    _install(HOST_BUNDLE / "mpv-watch.conf", MPV_SCRIPT_OPTS_DIR / "mpv-watch.conf")
+    _install(HOST_BUNDLE / "script-opts" / "mpv-watch.conf", MPV_SCRIPT_OPTS_DIR / "mpv-watch.conf")
 
 
 # ---------------------------------------------------------------------------
