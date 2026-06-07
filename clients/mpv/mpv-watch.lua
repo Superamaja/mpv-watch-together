@@ -7,7 +7,6 @@ local input_ok, input = pcall(require, "mp.input")
 
 local opts = {
     helper_url = "http://127.0.0.1:8765",
-    ipc_server = "",
     role = "guest",
     room = "",
     display_name = "mpv watcher",
@@ -39,7 +38,6 @@ local last_auto_force_sync_at = 0
 local host_found_notified = false
 local helper_connected = nil  -- nil=never tried, true=ok, false=was ok then lost
 local runtime_ready = false
-local ipc_server_started = false
 local observers_registered = false
 local heartbeat_timer = nil
 local command_timer = nil
@@ -48,10 +46,6 @@ local poll_commands = nil
 local set_sync = nil
 local send_state = nil
 local ensure_runtime_ready = nil
-
-local path_separator = package.config:sub(1, 1)
-local is_windows = path_separator == "\\"
-math.randomseed(os.time() + math.floor(mp.get_time() * 1000000))
 
 local function heartbeat_interval()
     return tonumber(opts.heartbeat_interval) or 5.0
@@ -100,67 +94,6 @@ local function trim(value)
         return ""
     end
     return value:gsub("^%s+", ""):gsub("%s+$", "")
-end
-
-local function ipc_server_name()
-    local pid = trim(mp.get_property("pid", ""))
-    if pid == "" then
-        pid = tostring(math.floor(mp.get_time() * 1000000))
-    end
-    return "mpv-watch-" .. pid .. "-" .. tostring(math.random(100000, 999999))
-end
-
-local function ipc_path_exists(path)
-    if is_windows then
-        return false
-    end
-    return utils.file_info(path) ~= nil
-end
-
-local function default_ipc_server()
-    local name = ipc_server_name()
-    if is_windows then
-        return "\\\\.\\pipe\\" .. name
-    end
-    local tmp_dir = os.getenv("TMPDIR") or "/tmp"
-    return utils.join_path(tmp_dir, name .. ".sock")
-end
-
-local function unique_ipc_server_path(path)
-    if is_windows or not ipc_path_exists(path) then
-        return path
-    end
-
-    local attempt = 0
-    while ipc_path_exists(path) and attempt < 20 do
-        attempt = attempt + 1
-        path = path .. "-" .. tostring(attempt)
-    end
-    return path
-end
-
-local function ensure_ipc_server()
-    if ipc_server_started then
-        return true
-    end
-
-    local ipc_server = trim(opts.ipc_server)
-    if ipc_server == "" then
-        ipc_server = default_ipc_server()
-    end
-    ipc_server = unique_ipc_server_path(ipc_server)
-
-    local ok, err = pcall(mp.set_property, "input-ipc-server", ipc_server)
-    if not ok then
-        msg.error("Failed to open mpv IPC server: " .. tostring(err))
-        mp.osd_message("Watch Together: failed to open mpv IPC")
-        return false
-    end
-
-    opts.ipc_server = ipc_server
-    ipc_server_started = true
-    msg.info("Opened mpv IPC server: " .. opts.ipc_server)
-    return true
 end
 
 local function request(method, path, body)
@@ -218,7 +151,6 @@ local function post_config()
         role = opts.role,
         roomId = opts.room,
         displayName = opts.display_name,
-        mpvIpcServer = opts.ipc_server,
     })
     if err then
         msg.warn("Failed to save helper config: " .. err)
@@ -693,9 +625,6 @@ end
 ensure_runtime_ready = function()
     if runtime_ready then
         return true
-    end
-    if not ensure_ipc_server() then
-        return false
     end
     register_observers()
     runtime_ready = true

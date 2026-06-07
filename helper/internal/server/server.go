@@ -292,29 +292,11 @@ func (a *App) runCoordinatorTick() {
 	}
 }
 
-func (a *App) handleGetConfig(w http.ResponseWriter, r *http.Request) {
-	a.mu.RLock()
-	defer a.mu.RUnlock()
-	serverNow := protocol.NowMillis() + a.serverTimeOffset
-	writeJSON(w, http.StatusOK, map[string]any{
-		"addr":         a.cfg.Addr,
-		"role":         a.cfg.Role,
-		"roomId":       a.cfg.RoomID,
-		"displayName":  a.cfg.DisplayName,
-		"userId":       a.cfg.UserID,
-		"mpvIpcServer": a.cfg.MPVIPCServer,
-		"syncEnabled":  a.syncEnabled,
-		"serverNow":    serverNow,
-		"room":         a.room,
-	})
-}
-
 func (a *App) handlePostConfig(w http.ResponseWriter, r *http.Request) {
 	var req struct {
-		Role         string `json:"role"`
-		RoomID       string `json:"roomId"`
-		DisplayName  string `json:"displayName"`
-		MPVIPCServer string `json:"mpvIpcServer"`
+		Role        string `json:"role"`
+		RoomID      string `json:"roomId"`
+		DisplayName string `json:"displayName"`
 	}
 	if !decodeJSON(w, r, &req) {
 		return
@@ -335,9 +317,6 @@ func (a *App) handlePostConfig(w http.ResponseWriter, r *http.Request) {
 	a.cfg.RoomID = strings.TrimSpace(req.RoomID)
 	if strings.TrimSpace(req.DisplayName) != "" {
 		a.cfg.DisplayName = strings.TrimSpace(req.DisplayName)
-	}
-	if strings.TrimSpace(req.MPVIPCServer) != "" {
-		a.cfg.MPVIPCServer = strings.TrimSpace(req.MPVIPCServer)
 	}
 	cfg := a.cfg
 	enabled := a.syncEnabled
@@ -461,23 +440,6 @@ func (a *App) handlePostMPVState(w http.ResponseWriter, r *http.Request) {
 	}
 
 	writeJSON(w, http.StatusOK, map[string]bool{"ok": true})
-}
-
-func (a *App) handleGetMPVCommands(w http.ResponseWriter, r *http.Request) {
-	a.mu.RLock()
-	defer a.mu.RUnlock()
-	serverNow := protocol.NowMillis() + a.serverTimeOffset
-	writeJSON(w, http.StatusOK, protocol.CommandSnapshot{
-		Role:        a.cfg.Role,
-		UserID:      a.cfg.UserID,
-		RoomID:      a.cfg.RoomID,
-		SyncEnabled: a.syncEnabled,
-		Host:        a.room.Host,
-		ForceSync:   a.room.ForceSync,
-		TrackSync:   a.room.TrackSync,
-		LatestEvent: a.room.Events.Latest,
-		ServerNow:   serverNow,
-	})
 }
 
 func (a *App) handlePostSync(w http.ResponseWriter, r *http.Request) {
@@ -752,39 +714,6 @@ func (a *App) handleDeleteGuest(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]bool{"ok": true})
 }
 
-func (a *App) handleEvents(w http.ResponseWriter, r *http.Request) {
-	flusher, ok := w.(http.Flusher)
-	if !ok {
-		writeJSON(w, http.StatusInternalServerError, apiError{Error: "streaming unsupported"})
-		return
-	}
-	w.Header().Set("Content-Type", "text/event-stream")
-	w.Header().Set("Cache-Control", "no-cache")
-	w.Header().Set("Connection", "keep-alive")
-
-	ch := make(chan []byte, 8)
-	a.mu.Lock()
-	a.subscribers[ch] = struct{}{}
-	a.mu.Unlock()
-	defer func() {
-		a.mu.Lock()
-		delete(a.subscribers, ch)
-		a.mu.Unlock()
-		close(ch)
-	}()
-
-	a.writeEvent(w, flusher)
-	for {
-		select {
-		case <-r.Context().Done():
-			return
-		case payload := <-ch:
-			fmt.Fprintf(w, "event: state\ndata: %s\n\n", payload)
-			flusher.Flush()
-		}
-	}
-}
-
 func (a *App) startRoomStream() {
 	a.mu.Lock()
 	if a.streamCancel != nil {
@@ -1016,53 +945,6 @@ func (a *App) removeHostParticipant(ctx context.Context, cfg config.Config, now 
 	}, nil); err != nil {
 		slog.Warn("failed to mark room inactive", "room", cfg.RoomID, "error", err)
 	}
-}
-
-func (a *App) publishState() {
-	a.mu.RLock()
-	serverNow := protocol.NowMillis() + a.serverTimeOffset
-	payload, err := json.Marshal(map[string]any{
-		"role":         a.cfg.Role,
-		"roomId":       a.cfg.RoomID,
-		"displayName":  a.cfg.DisplayName,
-		"userId":       a.cfg.UserID,
-		"mpvIpcServer": a.cfg.MPVIPCServer,
-		"syncEnabled":  a.syncEnabled,
-		"serverNow":    serverNow,
-		"room":         a.room,
-	})
-	subscribers := make([]chan []byte, 0, len(a.subscribers))
-	for ch := range a.subscribers {
-		subscribers = append(subscribers, ch)
-	}
-	a.mu.RUnlock()
-	if err != nil {
-		return
-	}
-	for _, ch := range subscribers {
-		select {
-		case ch <- payload:
-		default:
-		}
-	}
-}
-
-func (a *App) writeEvent(w http.ResponseWriter, flusher http.Flusher) {
-	a.mu.RLock()
-	serverNow := protocol.NowMillis() + a.serverTimeOffset
-	payload, _ := json.Marshal(map[string]any{
-		"role":         a.cfg.Role,
-		"roomId":       a.cfg.RoomID,
-		"displayName":  a.cfg.DisplayName,
-		"userId":       a.cfg.UserID,
-		"mpvIpcServer": a.cfg.MPVIPCServer,
-		"syncEnabled":  a.syncEnabled,
-		"serverNow":    serverNow,
-		"room":         a.room,
-	})
-	a.mu.RUnlock()
-	fmt.Fprintf(w, "event: state\ndata: %s\n\n", payload)
-	flusher.Flush()
 }
 
 func decodeJSON(w http.ResponseWriter, r *http.Request, target any) bool {
