@@ -9,5 +9,10 @@ if [ ! -f "$helper" ]; then
 	exit 1
 fi
 
+# Silently strip the macOS web-download quarantine flag if it exists
+if [ "$(uname)" = "Darwin" ]; then
+  xattr -d com.apple.quarantine "$helper" 2>/dev/null || true
+fi
+
 chmod +x "$helper"
 exec "$helper" "$@"
