@@ -747,6 +747,32 @@ input[type="checkbox"] {
   border-color: rgba(251, 113, 133, 0.5);
 }
 
+.guest-action {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  border: 1px solid rgba(52, 211, 153, 0.32);
+  border-radius: 999px;
+  padding: 4px 11px;
+  font: inherit;
+  font-size: 11px;
+  font-weight: 600;
+  cursor: pointer;
+  background: var(--accent-soft);
+  color: var(--accent);
+  transition: background 0.16s ease, border-color 0.16s ease;
+}
+
+.guest-action svg {
+  width: 13px;
+  height: 13px;
+}
+
+.guest-action:hover {
+  background: rgba(52, 211, 153, 0.24);
+  border-color: rgba(52, 211, 153, 0.5);
+}
+
 /* ---------- Collapsible drawers ---------- */
 .drawer {
   border: 1px solid var(--border);

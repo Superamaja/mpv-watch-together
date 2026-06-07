@@ -240,11 +240,22 @@ function hostCard(host) {
   `;
 }
 
+function canSyncToGuest(guest) {
+  return (
+    state.role === "host" &&
+    !!state.syncEnabled &&
+    !isStale(guest) &&
+    guest?.timeReliable !== false &&
+    Number.isFinite(guest?.currentTime)
+  );
+}
+
 function guestRow(userId, guest, host) {
   const stateText = guest.isBuffering ? "Buffering" : guest.isPlaying ? "Playing" : "Paused";
   const stale = isStale(guest);
   const drift = driftInfo(guest, host);
   const canRemove = state.role === "host" && stale;
+  const canSync = canSyncToGuest(guest);
   const name = guest.displayName || guest.userId;
   return `
     <div class="guest ${stale ? "is-stale" : ""}">
@@ -259,6 +270,10 @@ function guestRow(userId, guest, host) {
         <div class="pill ${stale ? "offline" : "online"}">${stale ? "offline" : "online"}</div>
         ${guest.isBuffering ? `<div class="pill buffering">buffering</div>` : ""}
         ${drift ? `<div class="pill ${drift.level}">${escapeHTML(drift.label)}</div>` : ""}
+        ${canSync ? `<button class="guest-action" data-sync-to-guest="${escapeHTML(userId)}" title="Move the whole room to ${escapeHTML(name)}'s current position">
+          <svg viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg" aria-hidden="true"><circle cx="12" cy="12" r="8" stroke="currentColor" stroke-width="1.8" /><circle cx="12" cy="12" r="2.5" fill="currentColor" /></svg>
+          Use Guest Time
+        </button>` : ""}
         ${canRemove ? `<button class="icon-button" data-remove-guest="${escapeHTML(userId)}" title="Remove offline guest">Remove</button>` : ""}
       </div>
     </div>
@@ -335,7 +350,13 @@ function notifyRoomEvent(event) {
 }
 
 function showsSelfEvent(type) {
-  return type === "force_sync" || type === "auto_force_sync" || type === "config_changed" || type === "tracks_synced";
+  return (
+    type === "force_sync" ||
+    type === "auto_force_sync" ||
+    type === "sync_to_guest" ||
+    type === "config_changed" ||
+    type === "tracks_synced"
+  );
 }
 
 function showToast(message) {
@@ -478,10 +499,24 @@ document.addEventListener("keydown", (event) => {
 });
 
 els.guestList.addEventListener("click", async (event) => {
-  const button = event.target.closest("[data-remove-guest]");
-  if (!button) return;
+  const syncButton = event.target.closest("[data-sync-to-guest]");
+  if (syncButton) {
+    try {
+      const result = await api("/api/host/sync-to-guest", {
+        method: "POST",
+        body: JSON.stringify({ userId: syncButton.dataset.syncToGuest }),
+      });
+      setStatus(result.message || "Synced room to guest");
+    } catch (error) {
+      setStatus(error.message, false);
+    }
+    return;
+  }
+
+  const removeButton = event.target.closest("[data-remove-guest]");
+  if (!removeButton) return;
   try {
-    await api(`/api/host/guests/${encodeURIComponent(button.dataset.removeGuest)}`, {
+    await api(`/api/host/guests/${encodeURIComponent(removeButton.dataset.removeGuest)}`, {
       method: "DELETE",
     });
     setStatus("Guest removed");
