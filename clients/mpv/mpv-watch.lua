@@ -12,7 +12,7 @@ local opts = {
     room = "",
     display_name = "mpv watcher",
     sync_on_start = "no",
-    state_interval = 1.0,
+    heartbeat_interval = 5.0,
     command_interval = 0.5,
     seek_lock = "yes",
     seek_lock_threshold = 3.0,
@@ -41,8 +41,9 @@ local helper_connected = nil  -- nil=never tried, true=ok, false=was ok then los
 local runtime_ready = false
 local ipc_server_started = false
 local observers_registered = false
-local state_timer = nil
+local heartbeat_timer = nil
 local command_timer = nil
+local pending_state_timer = nil
 local poll_commands = nil
 local set_sync = nil
 local send_state = nil
@@ -52,10 +53,14 @@ local path_separator = package.config:sub(1, 1)
 local is_windows = path_separator == "\\"
 math.randomseed(os.time() + math.floor(mp.get_time() * 1000000))
 
+local function heartbeat_interval()
+    return tonumber(opts.heartbeat_interval) or 5.0
+end
+
 local function start_timers()
     helper_connected = nil
-    if not state_timer then
-        state_timer = mp.add_periodic_timer(opts.state_interval, function() send_state() end)
+    if not heartbeat_timer then
+        heartbeat_timer = mp.add_periodic_timer(heartbeat_interval(), function() send_state() end)
     end
     if not command_timer then
         command_timer = mp.add_periodic_timer(opts.command_interval, function() poll_commands() end)
@@ -63,13 +68,17 @@ local function start_timers()
 end
 
 local function stop_timers()
-    if state_timer then
-        state_timer:kill()
-        state_timer = nil
+    if heartbeat_timer then
+        heartbeat_timer:kill()
+        heartbeat_timer = nil
     end
     if command_timer then
         command_timer:kill()
         command_timer = nil
+    end
+    if pending_state_timer then
+        pending_state_timer:kill()
+        pending_state_timer = nil
     end
 end
 
@@ -244,6 +253,7 @@ set_sync = function(enabled)
     sync_enabled = enabled
     if enabled then
         start_timers()
+        send_state()
     else
         stop_timers()
     end
@@ -320,6 +330,10 @@ local function current_server_millis()
 end
 
 send_state = function()
+    if pending_state_timer then
+        pending_state_timer:kill()
+        pending_state_timer = nil
+    end
     if not sync_enabled then
         return
     end
@@ -327,6 +341,16 @@ send_state = function()
     if err then
         msg.warn("Failed to send playback state: " .. err)
     end
+end
+
+local function queue_state_update()
+    if not sync_enabled or pending_state_timer then
+        return
+    end
+    pending_state_timer = mp.add_timeout(0.05, function()
+        pending_state_timer = nil
+        send_state()
+    end)
 end
 
 local function projected_time(state)
@@ -582,6 +606,7 @@ local function register_observers()
     observers_registered = true
 
     mp.observe_property("pause", "bool", function(_, paused)
+        queue_state_update()
         if paused or not sync_enabled or opts.role ~= "guest" or applying_remote_pause then
             return
         end
@@ -613,6 +638,15 @@ local function register_observers()
             return
         end
 
+        if last_time_pos and last_time_wall then
+            local elapsed = math.max(0, now - last_time_wall)
+            local paused = mp.get_property_bool("pause", true)
+            local expected_time = last_time_pos + (paused and 0 or elapsed)
+            if math.abs(current_time - expected_time) >= 1.0 then
+                queue_state_update()
+            end
+        end
+
         if opts.role == "host" and sync_enabled and opts.auto_force_sync_on_seek == "yes" and last_time_pos and last_time_wall then
             local elapsed = math.max(0, now - last_time_wall)
             local expected_time = last_time_pos + elapsed
@@ -636,6 +670,23 @@ local function register_observers()
 
         last_time_pos = current_time
         last_time_wall = now
+    end)
+
+    for _, property in ipairs({
+        "aid",
+        "sid",
+        "duration",
+        "paused-for-cache",
+        "cache-buffering-state",
+        "demuxer-cache-state",
+    }) do
+        mp.observe_property(property, "native", function()
+            queue_state_update()
+        end)
+    end
+
+    mp.register_event("file-loaded", function()
+        queue_state_update()
     end)
 end
 

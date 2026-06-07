@@ -801,7 +801,10 @@ func (a *App) startRoomStream() {
 			select {
 			case <-ctx.Done():
 				return
-			case err := <-errs:
+			case err, ok := <-errs:
+				if !ok {
+					return
+				}
 				if err != nil {
 					if firebase.IsNotFound(err) {
 						slog.Warn("firebase database path returned 404; check FIREBASE_DATABASE_URL points to Realtime Database, not authDomain/projectId/storageBucket", "room", roomID, "error", err)
@@ -809,16 +812,156 @@ func (a *App) startRoomStream() {
 					}
 					slog.Warn("firebase stream error", "room", roomID, "error", err)
 				}
-			case _, ok := <-events:
+			case event, ok := <-events:
 				if !ok {
 					return
 				}
-				a.refreshRoom(ctx, roomID)
+				if err := a.applyRoomStreamEvent(roomID, event); err != nil {
+					slog.Warn("failed to apply firebase stream event; refreshing room", "room", roomID, "error", err)
+					a.refreshRoom(ctx, roomID)
+				}
 			}
 		}
 	}()
+}
 
-	go a.refreshRoom(ctx, roomID)
+func (a *App) applyRoomStreamEvent(roomID string, event firebase.StreamEvent) error {
+	if event.Event != "put" && event.Event != "patch" {
+		return nil
+	}
+
+	var payload struct {
+		Path string          `json:"path"`
+		Data json.RawMessage `json:"data"`
+	}
+	if err := json.Unmarshal(event.Data, &payload); err != nil {
+		return err
+	}
+
+	value, err := decodeStreamValue(payload.Data)
+	if err != nil {
+		return err
+	}
+
+	a.mu.Lock()
+	if a.cfg.RoomID != roomID {
+		a.mu.Unlock()
+		return nil
+	}
+
+	var document any
+	if raw, err := json.Marshal(a.room); err != nil {
+		a.mu.Unlock()
+		return err
+	} else if err := json.Unmarshal(raw, &document); err != nil {
+		a.mu.Unlock()
+		return err
+	}
+
+	path := streamPathSegments(payload.Path)
+	if event.Event == "patch" {
+		patchJSONAtPath(&document, path, value)
+	} else {
+		setJSONAtPath(&document, path, value)
+	}
+
+	var nextRoom protocol.Room
+	if document != nil {
+		raw, err := json.Marshal(document)
+		if err != nil {
+			a.mu.Unlock()
+			return err
+		}
+		if string(raw) != "null" {
+			if err := json.Unmarshal(raw, &nextRoom); err != nil {
+				a.mu.Unlock()
+				return err
+			}
+		}
+	}
+	if nextRoom.Guests == nil {
+		nextRoom.Guests = map[string]protocol.ParticipantState{}
+	}
+
+	now := a.serverNowLocked()
+	var cleanupCfg config.Config
+	if a.cfg.Role == protocol.RoleGuest && a.syncEnabled && !a.isFreshParticipant(nextRoom.Host, now, hostPresenceGrace) {
+		a.syncEnabled = false
+		cleanupCfg = a.cfg
+	}
+	a.room = nextRoom
+	a.mu.Unlock()
+
+	if cleanupCfg.RoomID != "" && cleanupCfg.UserID != "" {
+		go a.removeGuestParticipant(context.Background(), cleanupCfg)
+	}
+	a.publishState()
+	return nil
+}
+
+func (a *App) serverNowLocked() int64 {
+	return protocol.NowMillis() + a.serverTimeOffset
+}
+
+func decodeStreamValue(raw json.RawMessage) (any, error) {
+	if len(raw) == 0 || string(raw) == "null" {
+		return nil, nil
+	}
+	var value any
+	if err := json.Unmarshal(raw, &value); err != nil {
+		return nil, err
+	}
+	return value, nil
+}
+
+func streamPathSegments(path string) []string {
+	path = strings.Trim(path, "/")
+	if path == "" {
+		return nil
+	}
+	return strings.Split(path, "/")
+}
+
+func patchJSONAtPath(document *any, path []string, value any) {
+	patch, ok := value.(map[string]any)
+	if !ok {
+		setJSONAtPath(document, path, value)
+		return
+	}
+	for key, childValue := range patch {
+		setJSONAtPath(document, append(append([]string{}, path...), key), childValue)
+	}
+}
+
+func setJSONAtPath(document *any, path []string, value any) {
+	if len(path) == 0 {
+		*document = value
+		return
+	}
+	if *document == nil {
+		*document = map[string]any{}
+	}
+	node, ok := (*document).(map[string]any)
+	if !ok {
+		node = map[string]any{}
+		*document = node
+	}
+	key := path[0]
+	if len(path) == 1 {
+		if value == nil {
+			delete(node, key)
+			return
+		}
+		node[key] = value
+		return
+	}
+	child := node[key]
+	setJSONAtPath(&child, path[1:], value)
+	if child == nil {
+		delete(node, key)
+		return
+	}
+	node[key] = child
 }
 
 func (a *App) refreshRoom(ctx context.Context, roomID string) {
