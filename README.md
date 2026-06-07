@@ -42,11 +42,17 @@ Only the host uses the browser dashboard. Guests keep the helper running in the 
 Each bundle contains:
 
 ```text
-helper/mpv-watch-helper(.exe)
-mpv/scripts/mpv-watch.lua
-mpv/script-opts/mpv-watch.conf
-.env.example
+mpv-watch-helper(.exe)
+scripts/mpv-watch.lua
+script-opts/mpv-watch.conf
 QUICKSTART.md
+```
+
+macOS bundles also contain:
+
+```text
+install-mpv-files.sh
+run-helper.sh
 ```
 
 ## Build
@@ -99,12 +105,10 @@ Start the Windows host bundle from the bundle folder:
 
 ```powershell
 cd .\dist\mpv-watch-host-windows-amd64
-Copy-Item .env.example .env
-notepad .env
-.\helper\mpv-watch-helper.exe
+.\mpv-watch-helper.exe
 ```
 
-Set `FIREBASE_DATABASE_URL` in `.env` before real Firebase testing.
+The release build bakes in `FIREBASE_DATABASE_URL` from the repo `.env` file. You can still override it at runtime with the `FIREBASE_DATABASE_URL` environment variable or `-firebase-url`.
 
 Open the host dashboard:
 
@@ -121,8 +125,8 @@ Guest helpers intentionally do not serve the dashboard. If a guest opens `http:/
 Install the Lua script and options from the bundle:
 
 ```text
-mpv/scripts/mpv-watch.lua
-mpv/script-opts/mpv-watch.conf
+scripts/mpv-watch.lua
+script-opts/mpv-watch.conf
 ```
 
 On Windows, typical mpv config folders are:
@@ -139,28 +143,40 @@ On macOS, typical mpv config folders are:
 ~/.config/mpv/script-opts/
 ```
 
+macOS bundles include an installer for the typical config folders:
+
+```sh
+sh ./install-mpv-files.sh
+```
+
+They also include a helper launcher that sets the executable bit before starting the binary:
+
+```sh
+sh ./run-helper.sh
+```
+
 Open a video in mpv and press `Ctrl+w` for the Watch Together menu.
 
 For a same-machine smoke test, run the host helper and open mpv with the host config. Then start a second helper on another port for guest testing:
 
 ```powershell
 cd .\dist\mpv-watch-guest-windows-amd64
-Copy-Item .env.example .env
-notepad .env
-.\helper\mpv-watch-helper.exe -role guest -room room123 -name Guest -addr 127.0.0.1:8766
+.\mpv-watch-helper.exe -role guest -room room123 -name Guest -addr 127.0.0.1:8766
 ```
 
 For the guest mpv instance, temporarily set `helper_url=http://127.0.0.1:8766` in that guest `mpv-watch.conf`.
 
 ## Firebase Setup
 
-Create a Firebase Realtime Database and put the URL in each bundle's `.env`:
+Create a Firebase Realtime Database and put the URL in the repo `.env` before building:
 
 ```text
 FIREBASE_DATABASE_URL=https://your-project-default-rtdb.firebaseio.com
 ```
 
 For early private testing, Firebase test-mode rules are the fastest path. For anything shared more broadly, add proper auth/rules before distributing the app.
+
+If you need to change Firebase after building, set `FIREBASE_DATABASE_URL` in the helper process environment or pass `-firebase-url`.
 
 ## Troubleshooting
 

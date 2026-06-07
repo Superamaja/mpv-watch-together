@@ -135,10 +135,28 @@ func writeBundle(outDir string, target target, role string, displayName string, 
 	if err := os.WriteFile(filepath.Join(optsDir, "mpv-watch.conf"), []byte(configFile(role, room, displayName)), 0o644); err != nil {
 		return "", err
 	}
+	if target.OS == "darwin" {
+		if err := writeMacScripts(bundleDir, binaryName); err != nil {
+			return "", err
+		}
+	}
 	if err := os.WriteFile(filepath.Join(bundleDir, "QUICKSTART.md"), []byte(quickstart(role, target, binaryName)), 0o644); err != nil {
 		return "", err
 	}
 	return bundleDir, nil
+}
+
+func writeMacScripts(bundleDir string, binaryName string) error {
+	files := map[string]string{
+		"install-mpv-files.sh": macInstallScript(),
+		"run-helper.sh":        macRunScript(binaryName),
+	}
+	for name, content := range files {
+		if err := os.WriteFile(filepath.Join(bundleDir, name), []byte(content), 0o755); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 func copyFile(src string, dst string, mode os.FileMode) error {
@@ -260,16 +278,61 @@ host_seek_cooldown=1.5
 `, role, room, displayName)
 }
 
+func macInstallScript() string {
+	return `#!/usr/bin/env sh
+set -eu
+
+: "${HOME:?HOME is required to find ~/.config/mpv}"
+
+bundle_dir="$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)"
+mpv_config_dir="${MPV_CONFIG_DIR:-$HOME/.config/mpv}"
+
+mkdir -p "$mpv_config_dir/scripts" "$mpv_config_dir/script-opts"
+
+cp -R "$bundle_dir/scripts/." "$mpv_config_dir/scripts/"
+cp -R "$bundle_dir/script-opts/." "$mpv_config_dir/script-opts/"
+
+printf 'Installed mpv Watch Together files to %s\n' "$mpv_config_dir"
+printf 'Copied scripts/ to %s/scripts\n' "$mpv_config_dir"
+printf 'Copied script-opts/ to %s/script-opts\n' "$mpv_config_dir"
+`
+}
+
+func macRunScript(binaryName string) string {
+	return fmt.Sprintf(`#!/usr/bin/env sh
+set -eu
+
+bundle_dir="$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)"
+helper="$bundle_dir/%s"
+
+if [ ! -f "$helper" ]; then
+	printf 'Could not find helper binary at %%s\n' "$helper" >&2
+	exit 1
+fi
+
+chmod +x "$helper"
+exec "$helper" "$@"
+`, binaryName)
+}
+
 func quickstart(role string, target target, binaryName string) string {
 	var scriptsDir, optsDir, runCommand string
+	var installIntro, extraBundleRows string
 	if target.OS == "windows" {
 		scriptsDir = `%APPDATA%\mpv\scripts\`
 		optsDir = `%APPDATA%\mpv\script-opts\`
 		runCommand = `.\` + binaryName
+		installIntro = "Copy these files:"
 	} else {
 		scriptsDir = "~/.config/mpv/scripts/"
 		optsDir = "~/.config/mpv/script-opts/"
 		runCommand = "./" + binaryName
+		installIntro = "Copy these files:"
+		if target.OS == "darwin" {
+			runCommand = "sh ./run-helper.sh"
+			installIntro = "Run the installer from this bundle:\n\n```sh\nsh ./install-mpv-files.sh\n```\n\nOr copy these files manually:"
+			extraBundleRows = "| install-mpv-files.sh | macOS installer that copies scripts/ and script-opts/ into ~/.config/mpv |\n| run-helper.sh | macOS launcher that sets the executable bit and starts the helper |\n"
+		}
 	}
 
 	var accessNote, portableNote string
@@ -309,10 +372,13 @@ Guests do not use a browser dashboard. Keep the helper running in the background
 | %s | Helper process — run this |
 | scripts/mpv-watch.lua | mpv Lua script — copy to your scripts folder |
 | script-opts/mpv-watch.conf | Script options — copy to your script-opts folder |
+%s
 
 ## Install
 
 ### 1. Copy the mpv files
+
+%s
 
 - **scripts/mpv-watch.lua** → %s
 - **script-opts/mpv-watch.conf** → %s
@@ -328,7 +394,7 @@ Keep this window open while watching.
 ### 3. Open mpv and press Ctrl+w
 
 %s
-`, title(role), binaryName, scriptsDir, optsDir, accessNote, portableNote, runCommand, dashboard)
+`, title(role), binaryName, extraBundleRows, installIntro, scriptsDir, optsDir, accessNote, portableNote, runCommand, dashboard)
 }
 
 func parseTargets(value string) ([]target, error) {
@@ -352,7 +418,7 @@ func parseTargets(value string) ([]target, error) {
 }
 
 func defaultTargets() string {
-	return "windows-amd64,darwin-arm64"
+	return "windows-amd64,darwin-amd64,darwin-arm64"
 }
 
 func title(value string) string {
