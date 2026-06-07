@@ -20,6 +20,9 @@ type appState struct {
 }
 
 func (a *App) snapshotLocked(includeAddr bool) appState {
+	room := a.room
+	settings := effectiveRoomSettings(room.Settings)
+	room.Settings = &settings
 	snapshot := appState{
 		Role:        a.cfg.Role,
 		RoomID:      a.cfg.RoomID,
@@ -27,7 +30,7 @@ func (a *App) snapshotLocked(includeAddr bool) appState {
 		UserID:      a.cfg.UserID,
 		SyncEnabled: a.syncEnabled,
 		ServerNow:   a.serverNowLocked(),
-		Room:        a.room,
+		Room:        room,
 	}
 	if includeAddr {
 		snapshot.Addr = a.cfg.Addr
@@ -44,6 +47,7 @@ func (a *App) handleGetConfig(w http.ResponseWriter, r *http.Request) {
 func (a *App) handleGetMPVCommands(w http.ResponseWriter, r *http.Request) {
 	a.mu.RLock()
 	defer a.mu.RUnlock()
+	settings := effectiveRoomSettings(a.room.Settings)
 	writeJSON(w, http.StatusOK, protocol.CommandSnapshot{
 		Role:        a.cfg.Role,
 		UserID:      a.cfg.UserID,
@@ -53,6 +57,7 @@ func (a *App) handleGetMPVCommands(w http.ResponseWriter, r *http.Request) {
 		ForceSync:   a.room.ForceSync,
 		TrackSync:   a.room.TrackSync,
 		LatestEvent: a.room.Events.Latest,
+		Settings:    &settings,
 		ServerNow:   a.serverNowLocked(),
 	})
 }

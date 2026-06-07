@@ -62,6 +62,58 @@
         </div>
       </section>
 
+      <section class="settings-panel panel" id="settingsPanel">
+        <div class="settings-head">
+          <h2 class="panel-title">Room Settings</h2>
+          <div class="settings-actions">
+            <button id="resetSettings" class="btn btn-ghost" type="button">Reset</button>
+            <button id="saveSettings" class="btn btn-ghost" type="button">Save Settings</button>
+          </div>
+        </div>
+        <div class="settings-grid">
+          <label class="field">
+            <span>Command poll</span>
+            <input id="commandInterval" type="number" min="0.25" max="3" step="0.05" />
+          </label>
+          <label class="check-field">
+            <input id="adaptivePolling" type="checkbox" />
+            <span>Adaptive polling</span>
+          </label>
+          <label class="field">
+            <span>Idle poll</span>
+            <input id="idleInterval" type="number" min="0.5" max="5" step="0.05" />
+          </label>
+          <label class="field">
+            <span>Active poll</span>
+            <input id="activeInterval" type="number" min="0.25" max="2" step="0.05" />
+          </label>
+          <label class="field">
+            <span>Reconnect max</span>
+            <input id="reconnectBackoffMax" type="number" min="1" max="15" step="0.25" />
+          </label>
+          <label class="check-field">
+            <input id="seekLock" type="checkbox" />
+            <span>Seek lock</span>
+          </label>
+          <label class="field">
+            <span>Seek lock gap</span>
+            <input id="seekLockThreshold" type="number" min="0.5" max="10" step="0.1" />
+          </label>
+          <label class="check-field">
+            <input id="autoForceSyncOnSeek" type="checkbox" />
+            <span>Auto sync seek</span>
+          </label>
+          <label class="field">
+            <span>Host seek gap</span>
+            <input id="hostSeekThreshold" type="number" min="0.5" max="10" step="0.1" />
+          </label>
+          <label class="field">
+            <span>Seek cooldown</span>
+            <input id="hostSeekCooldown" type="number" min="0.25" max="10" step="0.25" />
+          </label>
+        </div>
+      </section>
+
       <section class="grid">
         <article class="panel host-panel">
           <h2 class="panel-title">

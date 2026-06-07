@@ -10,6 +10,19 @@ const els = {
   toggleSyncLabel: document.querySelector("#toggleSync .btn-toggle-label"),
   forceSync: document.querySelector("#forceSync"),
   pushTracks: document.querySelector("#pushTracks"),
+  settingsPanel: document.querySelector("#settingsPanel"),
+  saveSettings: document.querySelector("#saveSettings"),
+  resetSettings: document.querySelector("#resetSettings"),
+  commandInterval: document.querySelector("#commandInterval"),
+  adaptivePolling: document.querySelector("#adaptivePolling"),
+  idleInterval: document.querySelector("#idleInterval"),
+  activeInterval: document.querySelector("#activeInterval"),
+  reconnectBackoffMax: document.querySelector("#reconnectBackoffMax"),
+  seekLock: document.querySelector("#seekLock"),
+  seekLockThreshold: document.querySelector("#seekLockThreshold"),
+  autoForceSyncOnSeek: document.querySelector("#autoForceSyncOnSeek"),
+  hostSeekThreshold: document.querySelector("#hostSeekThreshold"),
+  hostSeekCooldown: document.querySelector("#hostSeekCooldown"),
   hostState: document.querySelector("#hostState"),
   guestHeadingText: document.querySelector("#guestHeadingText"),
   guestList: document.querySelector("#guestList"),
@@ -18,6 +31,22 @@ const els = {
 const STALE_MS = 20_000;
 const DRIFT_GREEN_S = 1;
 const DRIFT_AMBER_S = 3;
+const DEFAULT_ROOM_SETTINGS = {
+  polling: {
+    commandInterval: 0.5,
+    adaptivePolling: false,
+    idleInterval: 1.25,
+    activeInterval: 0.35,
+    reconnectBackoffMax: 8,
+  },
+  sync: {
+    seekLock: true,
+    seekLockThreshold: 3,
+    autoForceSyncOnSeek: true,
+    hostSeekThreshold: 2.5,
+    hostSeekCooldown: 1.5,
+  },
+};
 
 let state = { syncEnabled: false, room: {} };
 let previousGuests = new Map();
@@ -25,6 +54,7 @@ let hasGuestSnapshot = false;
 let stateReceivedAt = Date.now();
 let lastRoomEventId = null;
 let eventStreamConnected = null;
+let settingsDirty = false;
 
 async function api(path, options = {}) {
   const response = await fetch(path, {
@@ -55,6 +85,7 @@ function render(next) {
   els.toggleSync.setAttribute("aria-pressed", String(!!state.syncEnabled));
   els.forceSync.disabled = state.role !== "host" || !state.syncEnabled;
   els.pushTracks.disabled = state.role !== "host" || !state.syncEnabled;
+  renderSettings(next.room?.settings);
 
   const host = state.room?.host;
   els.hostState.innerHTML = host ? hostCard(host) : `<div class="empty">No host state yet.</div>`;
@@ -68,6 +99,80 @@ function render(next) {
   els.guestList.innerHTML = guests.length
     ? guests.map(([userId, guest]) => guestRow(userId, guest, state.room?.host)).join("")
     : `<div class="empty">No synced guests yet.</div>`;
+}
+
+function effectiveSettings(settings) {
+  return {
+    polling: { ...DEFAULT_ROOM_SETTINGS.polling, ...(settings?.polling || {}) },
+    sync: { ...DEFAULT_ROOM_SETTINGS.sync, ...(settings?.sync || {}) },
+  };
+}
+
+function renderSettings(settings) {
+  const next = effectiveSettings(settings);
+  const canEdit = state.role === "host" && !!state.roomId;
+  els.settingsPanel.classList.toggle("is-disabled", !canEdit);
+  els.saveSettings.disabled = !canEdit;
+  els.resetSettings.disabled = !canEdit;
+  for (const input of settingsInputs()) {
+    input.disabled = !canEdit;
+  }
+  if (settingsDirty) return;
+  els.commandInterval.value = formatSettingNumber(next.polling.commandInterval);
+  els.adaptivePolling.checked = !!next.polling.adaptivePolling;
+  els.idleInterval.value = formatSettingNumber(next.polling.idleInterval);
+  els.activeInterval.value = formatSettingNumber(next.polling.activeInterval);
+  els.reconnectBackoffMax.value = formatSettingNumber(next.polling.reconnectBackoffMax);
+  els.seekLock.checked = !!next.sync.seekLock;
+  els.seekLockThreshold.value = formatSettingNumber(next.sync.seekLockThreshold);
+  els.autoForceSyncOnSeek.checked = !!next.sync.autoForceSyncOnSeek;
+  els.hostSeekThreshold.value = formatSettingNumber(next.sync.hostSeekThreshold);
+  els.hostSeekCooldown.value = formatSettingNumber(next.sync.hostSeekCooldown);
+}
+
+function settingsInputs() {
+  return [
+    els.commandInterval,
+    els.adaptivePolling,
+    els.idleInterval,
+    els.activeInterval,
+    els.reconnectBackoffMax,
+    els.seekLock,
+    els.seekLockThreshold,
+    els.autoForceSyncOnSeek,
+    els.hostSeekThreshold,
+    els.hostSeekCooldown,
+  ];
+}
+
+function readSettings() {
+  const fallback = effectiveSettings(state.room?.settings);
+  return {
+    polling: {
+      commandInterval: readNumber(els.commandInterval, fallback.polling.commandInterval),
+      adaptivePolling: els.adaptivePolling.checked,
+      idleInterval: readNumber(els.idleInterval, fallback.polling.idleInterval),
+      activeInterval: readNumber(els.activeInterval, fallback.polling.activeInterval),
+      reconnectBackoffMax: readNumber(els.reconnectBackoffMax, fallback.polling.reconnectBackoffMax),
+    },
+    sync: {
+      seekLock: els.seekLock.checked,
+      seekLockThreshold: readNumber(els.seekLockThreshold, fallback.sync.seekLockThreshold),
+      autoForceSyncOnSeek: els.autoForceSyncOnSeek.checked,
+      hostSeekThreshold: readNumber(els.hostSeekThreshold, fallback.sync.hostSeekThreshold),
+      hostSeekCooldown: readNumber(els.hostSeekCooldown, fallback.sync.hostSeekCooldown),
+    },
+  };
+}
+
+function readNumber(input, fallback) {
+  const value = Number(input.value);
+  return Number.isFinite(value) ? value : fallback;
+}
+
+function formatSettingNumber(value) {
+  if (!Number.isFinite(value)) return "";
+  return String(Math.round(value * 100) / 100);
 }
 
 function hostCard(host) {
@@ -291,6 +396,42 @@ els.pushTracks.addEventListener("click", async () => {
   try {
     const result = await api("/api/host/track-sync", { method: "POST", body: "{}" });
     setStatus(result.message || "Tracks pushed");
+  } catch (error) {
+    setStatus(error.message, false);
+  }
+});
+
+for (const input of settingsInputs()) {
+  input.addEventListener("input", () => {
+    settingsDirty = true;
+  });
+  input.addEventListener("change", () => {
+    settingsDirty = true;
+  });
+}
+
+els.saveSettings.addEventListener("click", async () => {
+  try {
+    const result = await api("/api/host/settings", {
+      method: "POST",
+      body: JSON.stringify(readSettings()),
+    });
+    settingsDirty = false;
+    state.room = { ...(state.room || {}), settings: result.settings };
+    render(state);
+    setStatus("Settings saved");
+  } catch (error) {
+    setStatus(error.message, false);
+  }
+});
+
+els.resetSettings.addEventListener("click", async () => {
+  try {
+    const result = await api("/api/host/settings", { method: "DELETE" });
+    settingsDirty = false;
+    state.room = { ...(state.room || {}), settings: result.settings };
+    render(state);
+    setStatus("Settings reset");
   } catch (error) {
     setStatus(error.message, false);
   }

@@ -228,6 +228,7 @@ archive/stremio-userscript         old Stremio userscript project
 - Firebase server-time calibration for timestamping, projection, and drift display.
 - Host dashboard guest list with online/offline state, buffering, drift, last sync time, and last-seen age.
 - Host dashboard one-shot audio/subtitle track push for synced guests.
+- Host dashboard room settings for polling cadence, adaptive polling, seek-lock, and host seek auto-sync thresholds.
 - Toast/OSD notifications for join, leave, guest buffering host-pause, force sync counts, host seek auto-sync, guest seek sync, connection loss/restored, room/name changes, and stale guest removal.
 - Synced participant cleanup: guests are deleted on unsync, normal helper shutdown, host-loss auto-unsync, and host-side stale pruning.
 - Host removal for stale/offline guests from the dashboard.

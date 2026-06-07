@@ -15,6 +15,10 @@ local opts = {
     sync_on_start = "no",
     heartbeat_interval = 5.0,
     command_interval = 0.5,
+    adaptive_polling = "no",
+    idle_command_interval = 1.25,
+    active_command_interval = 0.35,
+    reconnect_backoff_max = 8.0,
     seek_lock = "yes",
     seek_lock_threshold = 3.0,
     auto_force_sync_on_seek = "yes",
@@ -39,6 +43,8 @@ local last_time_wall = nil
 local last_auto_force_sync_at = 0
 local host_found_notified = false
 local helper_connected = nil  -- nil=never tried, true=ok, false=was ok then lost
+local active_poll_until = 0
+local reconnect_poll_interval = nil
 local runtime_ready = false
 local observers_registered = false
 local heartbeat_timer = nil
@@ -48,9 +54,65 @@ local poll_commands = nil
 local set_sync = nil
 local send_state = nil
 local ensure_runtime_ready = nil
+local schedule_command_poll = nil
 
 local function heartbeat_interval()
     return tonumber(opts.heartbeat_interval) or 5.0
+end
+
+local function number_option(value, fallback, minimum, maximum)
+    local number = tonumber(value) or fallback
+    if minimum and number < minimum then
+        return minimum
+    end
+    if maximum and number > maximum then
+        return maximum
+    end
+    return number
+end
+
+local function yes_no(value)
+    return value and "yes" or "no"
+end
+
+local function command_interval()
+    return number_option(opts.command_interval, 0.5, 0.25, 3.0)
+end
+
+local function idle_command_interval()
+    return number_option(opts.idle_command_interval, 1.25, 0.5, 5.0)
+end
+
+local function active_command_interval()
+    return number_option(opts.active_command_interval, 0.35, 0.25, 2.0)
+end
+
+local function reconnect_backoff_max()
+    return number_option(opts.reconnect_backoff_max, 8.0, 1.0, 15.0)
+end
+
+local function adaptive_polling_enabled()
+    return opts.adaptive_polling == "yes"
+end
+
+local function current_command_interval()
+    if not adaptive_polling_enabled() then
+        return command_interval()
+    end
+    if helper_connected == false then
+        return reconnect_poll_interval or idle_command_interval()
+    end
+    if mp.get_time() < active_poll_until then
+        return active_command_interval()
+    end
+    return idle_command_interval()
+end
+
+local function mark_active_polling(duration)
+    if not adaptive_polling_enabled() then
+        return
+    end
+    active_poll_until = math.max(active_poll_until, mp.get_time() + (duration or 6.0))
 end
 
 local function start_timers()
@@ -59,7 +121,7 @@ local function start_timers()
         heartbeat_timer = mp.add_periodic_timer(heartbeat_interval(), function() send_state() end)
     end
     if not command_timer then
-        command_timer = mp.add_periodic_timer(opts.command_interval, function() poll_commands() end)
+        schedule_command_poll(current_command_interval())
     end
 end
 
@@ -76,6 +138,20 @@ local function stop_timers()
         pending_state_timer:kill()
         pending_state_timer = nil
     end
+end
+
+schedule_command_poll = function(delay)
+    if not sync_enabled or command_timer then
+        return
+    end
+    command_timer = mp.add_timeout(delay or current_command_interval(), function()
+        command_timer = nil
+        if not sync_enabled then
+            return
+        end
+        poll_commands()
+        schedule_command_poll(current_command_interval())
+    end)
 end
 
 local function should_show_event(event, user_id)
@@ -190,6 +266,7 @@ set_sync = function(enabled)
     end
     sync_enabled = enabled
     if enabled then
+        mark_active_polling(8.0)
         start_timers()
         send_state()
     else
@@ -355,6 +432,50 @@ local function apply_track_sync(track_sync)
     show_message("received tracks - audio " .. display_track_id(track_sync.aid) .. ", subtitles " .. display_track_id(track_sync.sid))
 end
 
+local function apply_room_settings(settings)
+    if type(settings) ~= "table" then
+        return
+    end
+
+    local polling = settings.polling
+    if type(polling) == "table" then
+        if type(polling.commandInterval) == "number" then
+            opts.command_interval = polling.commandInterval
+        end
+        if type(polling.adaptivePolling) == "boolean" then
+            opts.adaptive_polling = yes_no(polling.adaptivePolling)
+        end
+        if type(polling.idleInterval) == "number" then
+            opts.idle_command_interval = polling.idleInterval
+        end
+        if type(polling.activeInterval) == "number" then
+            opts.active_command_interval = polling.activeInterval
+        end
+        if type(polling.reconnectBackoffMax) == "number" then
+            opts.reconnect_backoff_max = polling.reconnectBackoffMax
+        end
+    end
+
+    local sync = settings.sync
+    if type(sync) == "table" then
+        if type(sync.seekLock) == "boolean" then
+            opts.seek_lock = yes_no(sync.seekLock)
+        end
+        if type(sync.seekLockThreshold) == "number" then
+            opts.seek_lock_threshold = sync.seekLockThreshold
+        end
+        if type(sync.autoForceSyncOnSeek) == "boolean" then
+            opts.auto_force_sync_on_seek = yes_no(sync.autoForceSyncOnSeek)
+        end
+        if type(sync.hostSeekThreshold) == "number" then
+            opts.host_seek_threshold = sync.hostSeekThreshold
+        end
+        if type(sync.hostSeekCooldown) == "number" then
+            opts.host_seek_cooldown = sync.hostSeekCooldown
+        end
+    end
+end
+
 poll_commands = function()
     local data, err = helper_request("GET", "/api/mpv/commands")
     if err or not data then
@@ -364,12 +485,18 @@ poll_commands = function()
         else
             helper_connected = false
         end
+        if adaptive_polling_enabled() then
+            local next_interval = reconnect_poll_interval or idle_command_interval()
+            reconnect_poll_interval = math.min(next_interval * 1.5, reconnect_backoff_max())
+        end
         return
     end
     if helper_connected == false then
         show_message("reconnected")
     end
     helper_connected = true
+    reconnect_poll_interval = nil
+    apply_room_settings(data.settings)
     if type(data.serverNow) == "number" then
         last_server_now = data.serverNow
         last_server_wall = mp.get_time()
@@ -393,6 +520,7 @@ poll_commands = function()
     end
     if data.forceSync and data.forceSync.syncId and data.forceSync.syncId ~= last_force_sync_id then
         last_force_sync_id = data.forceSync.syncId
+        mark_active_polling(8.0)
         apply_remote_state(data.forceSync, true)
         if data.forceSync.reason == "auto_seek" then
             show_message("synced to host seek")
@@ -403,11 +531,15 @@ poll_commands = function()
     end
     if data.trackSync and data.trackSync.syncId and data.trackSync.syncId ~= last_track_sync_id then
         last_track_sync_id = data.trackSync.syncId
+        mark_active_polling(6.0)
         apply_track_sync(data.trackSync)
     end
     if data.host then
         local force = force_next_host_apply
         force_next_host_apply = false
+        if force then
+            mark_active_polling(8.0)
+        end
         apply_remote_state(data.host, force)
         if opts.role == "guest" and sync_enabled and not host_found_notified then
             host_found_notified = true
@@ -426,6 +558,7 @@ local function force_sync(current_time, reason)
     end
 
     local state = playback_state()
+    mark_active_polling(8.0)
     if type(current_time) == "number" then
         state.currentTime = current_time
     end

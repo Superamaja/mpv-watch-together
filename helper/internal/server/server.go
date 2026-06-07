@@ -90,6 +90,8 @@ func (a *App) Handler() http.Handler {
 	mux.HandleFunc("POST /api/sync", a.handlePostSync)
 	mux.HandleFunc("POST /api/host/force-sync", a.handlePostForceSync)
 	mux.HandleFunc("POST /api/host/track-sync", a.handlePostTrackSync)
+	mux.HandleFunc("POST /api/host/settings", a.handlePostHostSettings)
+	mux.HandleFunc("DELETE /api/host/settings", a.handleDeleteHostSettings)
 	mux.HandleFunc("DELETE /api/host/guests/{userId}", a.handleDeleteGuest)
 	mux.HandleFunc("GET /api/events", a.handleEvents)
 

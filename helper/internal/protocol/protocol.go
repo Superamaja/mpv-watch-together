@@ -60,6 +60,27 @@ type RoomEvents struct {
 	Latest *RoomEvent `json:"latest,omitempty"`
 }
 
+type PollingSettings struct {
+	CommandInterval     float64 `json:"commandInterval"`
+	AdaptivePolling     bool    `json:"adaptivePolling"`
+	IdleInterval        float64 `json:"idleInterval"`
+	ActiveInterval      float64 `json:"activeInterval"`
+	ReconnectBackoffMax float64 `json:"reconnectBackoffMax"`
+}
+
+type SyncSettings struct {
+	SeekLock            bool    `json:"seekLock"`
+	SeekLockThreshold   float64 `json:"seekLockThreshold"`
+	AutoForceSyncOnSeek bool    `json:"autoForceSyncOnSeek"`
+	HostSeekThreshold   float64 `json:"hostSeekThreshold"`
+	HostSeekCooldown    float64 `json:"hostSeekCooldown"`
+}
+
+type RoomSettings struct {
+	Polling PollingSettings `json:"polling"`
+	Sync    SyncSettings    `json:"sync"`
+}
+
 type Room struct {
 	RoomID      string                      `json:"roomId"`
 	VideoURL    string                      `json:"videoURL,omitempty"`
@@ -69,6 +90,7 @@ type Room struct {
 	ForceSync   *ForceSync                  `json:"forceSync,omitempty"`
 	TrackSync   *TrackSync                  `json:"trackSync,omitempty"`
 	Events      RoomEvents                  `json:"events,omitempty"`
+	Settings    *RoomSettings               `json:"settings,omitempty"`
 	Status      string                      `json:"status"`
 	UpdatedAt   int64                       `json:"updatedAt"`
 }
@@ -82,6 +104,7 @@ type CommandSnapshot struct {
 	ForceSync   *ForceSync        `json:"forceSync,omitempty"`
 	TrackSync   *TrackSync        `json:"trackSync,omitempty"`
 	LatestEvent *RoomEvent        `json:"latestEvent,omitempty"`
+	Settings    *RoomSettings     `json:"settings,omitempty"`
 	ServerNow   int64             `json:"serverNow"`
 }
 
