@@ -70,47 +70,64 @@
             <button id="saveSettings" class="btn btn-ghost" type="button">Save Settings</button>
           </div>
         </div>
-        <div class="settings-grid">
-          <label class="field">
-            <span>Command poll</span>
-            <input id="commandInterval" type="number" min="0.25" max="3" step="0.05" />
-          </label>
-          <label class="check-field">
-            <input id="adaptivePolling" type="checkbox" />
-            <span>Adaptive polling</span>
-          </label>
-          <label class="field">
-            <span>Idle poll</span>
-            <input id="idleInterval" type="number" min="0.5" max="5" step="0.05" />
-          </label>
-          <label class="field">
-            <span>Active poll</span>
-            <input id="activeInterval" type="number" min="0.25" max="2" step="0.05" />
-          </label>
-          <label class="field">
-            <span>Reconnect max</span>
-            <input id="reconnectBackoffMax" type="number" min="1" max="15" step="0.25" />
-          </label>
-          <label class="check-field">
-            <input id="seekLock" type="checkbox" />
-            <span>Seek lock</span>
-          </label>
-          <label class="field">
-            <span>Seek lock gap</span>
-            <input id="seekLockThreshold" type="number" min="0.5" max="10" step="0.1" />
-          </label>
-          <label class="check-field">
-            <input id="autoForceSyncOnSeek" type="checkbox" />
-            <span>Auto sync seek</span>
-          </label>
-          <label class="field">
-            <span>Host seek gap</span>
-            <input id="hostSeekThreshold" type="number" min="0.5" max="10" step="0.1" />
-          </label>
-          <label class="field">
-            <span>Seek cooldown</span>
-            <input id="hostSeekCooldown" type="number" min="0.25" max="10" step="0.25" />
-          </label>
+        <div class="settings-sections">
+          <fieldset class="settings-group">
+            <legend>Baseline Polling</legend>
+            <div class="settings-grid">
+              <label class="field" title="How often synced mpv clients ask the helper for commands when adaptive polling is off.">
+                <span>Command poll</span>
+                <input id="commandInterval" type="number" min="0.25" max="3" step="0.05" title="Fixed command polling interval in seconds." />
+              </label>
+            </div>
+          </fieldset>
+
+          <fieldset class="settings-group">
+            <legend>Adaptive Polling</legend>
+            <div class="settings-grid">
+              <label class="check-field" title="Use faster polling around sync activity and slower polling while idle.">
+                <input id="adaptivePolling" type="checkbox" title="Toggle adaptive command polling for synced mpv clients." />
+                <span>Adaptive polling</span>
+              </label>
+              <label class="field" title="Polling interval used when no recent sync activity is happening.">
+                <span>Idle poll</span>
+                <input id="idleInterval" type="number" min="0.5" max="5" step="0.05" title="Idle adaptive polling interval in seconds." />
+              </label>
+              <label class="field" title="Polling interval used briefly after sync starts, force sync, track sync, or host snap activity.">
+                <span>Active poll</span>
+                <input id="activeInterval" type="number" min="0.25" max="2" step="0.05" title="Active adaptive polling interval in seconds." />
+              </label>
+              <label class="field" title="Maximum polling delay while a client is reconnecting to the helper.">
+                <span>Reconnect max</span>
+                <input id="reconnectBackoffMax" type="number" min="1" max="15" step="0.25" title="Maximum reconnect polling backoff in seconds." />
+              </label>
+            </div>
+          </fieldset>
+
+          <fieldset class="settings-group">
+            <legend>Sync Behavior</legend>
+            <div class="settings-grid">
+              <label class="check-field" title="Keep guests snapped to the host if they seek too far away.">
+                <input id="seekLock" type="checkbox" title="Toggle guest seek-lock behavior." />
+                <span>Seek lock</span>
+              </label>
+              <label class="field" title="How far a guest can drift from the host before seek-lock snaps them back.">
+                <span>Seek lock gap</span>
+                <input id="seekLockThreshold" type="number" min="0.5" max="10" step="0.1" title="Guest seek-lock threshold in seconds." />
+              </label>
+              <label class="check-field" title="Send an automatic force sync when the host seeks far enough.">
+                <input id="autoForceSyncOnSeek" type="checkbox" title="Toggle host auto-sync after seeking." />
+                <span>Auto sync seek</span>
+              </label>
+              <label class="field" title="How large a host seek must be before auto-sync triggers.">
+                <span>Host seek gap</span>
+                <input id="hostSeekThreshold" type="number" min="0.5" max="10" step="0.1" title="Host seek auto-sync threshold in seconds." />
+              </label>
+              <label class="field" title="Minimum time between host auto-sync events after seeks.">
+                <span>Seek cooldown</span>
+                <input id="hostSeekCooldown" type="number" min="0.25" max="10" step="0.25" title="Host seek auto-sync cooldown in seconds." />
+              </label>
+            </div>
+          </fieldset>
         </div>
       </section>
 
