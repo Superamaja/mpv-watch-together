@@ -92,3 +92,29 @@ func TestConfigTemplateUsesBundleValues(t *testing.T) {
 		}
 	}
 }
+
+func TestConfigTemplateOmitsRoomSettingDefaults(t *testing.T) {
+	data := newBundleTemplateData("guest", target{OS: "windows", Arch: "amd64"}, "Guest", "movie-night", "mpv-watch-helper.exe")
+	doc, err := renderTemplate("mpv-watch.conf.tmpl", data)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	for _, forbidden := range []string{
+		"helper_url=",
+		"command_interval=",
+		"adaptive_polling=",
+		"idle_command_interval=",
+		"active_command_interval=",
+		"reconnect_backoff_max=",
+		"seek_lock=",
+		"seek_lock_threshold=",
+		"auto_force_sync_on_seek=",
+		"host_seek_threshold=",
+		"host_seek_cooldown=",
+	} {
+		if strings.Contains(doc, forbidden) {
+			t.Fatalf("config template should not write room setting default %q", forbidden)
+		}
+	}
+}

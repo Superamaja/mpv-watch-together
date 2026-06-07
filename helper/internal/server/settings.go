@@ -12,18 +12,25 @@ import (
 const (
 	minCommandInterval     = 0.25
 	maxCommandInterval     = 3.0
+	stepCommandInterval    = 0.05
 	minActiveInterval      = 0.25
 	maxActiveInterval      = 2.0
+	stepActiveInterval     = 0.05
 	minIdleInterval        = 0.5
 	maxIdleInterval        = 5.0
+	stepIdleInterval       = 0.05
 	minReconnectBackoffMax = 1.0
 	maxReconnectBackoffMax = 15.0
+	stepReconnectBackoff   = 0.25
 	minSeekLockThreshold   = 0.5
 	maxSeekLockThreshold   = 10.0
+	stepSeekLockThreshold  = 0.1
 	minHostSeekThreshold   = 0.5
 	maxHostSeekThreshold   = 10.0
+	stepHostSeekThreshold  = 0.1
 	minHostSeekCooldown    = 0.25
 	maxHostSeekCooldown    = 10.0
+	stepHostSeekCooldown   = 0.25
 )
 
 type roomSettingsRequest struct {
@@ -47,6 +54,30 @@ type syncSettingsRequest struct {
 	HostSeekCooldown    *float64 `json:"hostSeekCooldown"`
 }
 
+type roomSettingsConstraints struct {
+	Polling pollingSettingsConstraints `json:"polling"`
+	Sync    syncSettingsConstraints    `json:"sync"`
+}
+
+type pollingSettingsConstraints struct {
+	CommandInterval     numberSettingConstraint `json:"commandInterval"`
+	IdleInterval        numberSettingConstraint `json:"idleInterval"`
+	ActiveInterval      numberSettingConstraint `json:"activeInterval"`
+	ReconnectBackoffMax numberSettingConstraint `json:"reconnectBackoffMax"`
+}
+
+type syncSettingsConstraints struct {
+	SeekLockThreshold numberSettingConstraint `json:"seekLockThreshold"`
+	HostSeekThreshold numberSettingConstraint `json:"hostSeekThreshold"`
+	HostSeekCooldown  numberSettingConstraint `json:"hostSeekCooldown"`
+}
+
+type numberSettingConstraint struct {
+	Min  float64 `json:"min"`
+	Max  float64 `json:"max"`
+	Step float64 `json:"step"`
+}
+
 func defaultRoomSettings() protocol.RoomSettings {
 	return protocol.RoomSettings{
 		Polling: protocol.PollingSettings{
@@ -62,6 +93,22 @@ func defaultRoomSettings() protocol.RoomSettings {
 			AutoForceSyncOnSeek: true,
 			HostSeekThreshold:   2.5,
 			HostSeekCooldown:    1.5,
+		},
+	}
+}
+
+func defaultRoomSettingsConstraints() roomSettingsConstraints {
+	return roomSettingsConstraints{
+		Polling: pollingSettingsConstraints{
+			CommandInterval:     numberSettingConstraint{Min: minCommandInterval, Max: maxCommandInterval, Step: stepCommandInterval},
+			IdleInterval:        numberSettingConstraint{Min: minIdleInterval, Max: maxIdleInterval, Step: stepIdleInterval},
+			ActiveInterval:      numberSettingConstraint{Min: minActiveInterval, Max: maxActiveInterval, Step: stepActiveInterval},
+			ReconnectBackoffMax: numberSettingConstraint{Min: minReconnectBackoffMax, Max: maxReconnectBackoffMax, Step: stepReconnectBackoff},
+		},
+		Sync: syncSettingsConstraints{
+			SeekLockThreshold: numberSettingConstraint{Min: minSeekLockThreshold, Max: maxSeekLockThreshold, Step: stepSeekLockThreshold},
+			HostSeekThreshold: numberSettingConstraint{Min: minHostSeekThreshold, Max: maxHostSeekThreshold, Step: stepHostSeekThreshold},
+			HostSeekCooldown:  numberSettingConstraint{Min: minHostSeekCooldown, Max: maxHostSeekCooldown, Step: stepHostSeekCooldown},
 		},
 	}
 }

@@ -7,6 +7,26 @@ local input_ok, input = pcall(require, "mp.input")
 
 local OSD_PREFIX = "Watch Together: "
 
+local ROOM_SETTING_DEFAULTS = {
+    command_interval = 0.5,
+    idle_command_interval = 1.25,
+    active_command_interval = 0.35,
+    reconnect_backoff_max = 8.0,
+    seek_lock_threshold = 3.0,
+    host_seek_threshold = 2.5,
+    host_seek_cooldown = 1.5,
+}
+
+local ROOM_SETTING_LIMITS = {
+    command_interval = { min = 0.25, max = 3.0 },
+    idle_command_interval = { min = 0.5, max = 5.0 },
+    active_command_interval = { min = 0.25, max = 2.0 },
+    reconnect_backoff_max = { min = 1.0, max = 15.0 },
+    seek_lock_threshold = { min = 0.5, max = 10.0 },
+    host_seek_threshold = { min = 0.5, max = 10.0 },
+    host_seek_cooldown = { min = 0.25, max = 10.0 },
+}
+
 local opts = {
     helper_url = "http://127.0.0.1:8765",
     role = "guest",
@@ -14,16 +34,16 @@ local opts = {
     display_name = "mpv watcher",
     sync_on_start = "no",
     heartbeat_interval = 5.0,
-    command_interval = 0.5,
+    command_interval = ROOM_SETTING_DEFAULTS.command_interval,
     adaptive_polling = "no",
-    idle_command_interval = 1.25,
-    active_command_interval = 0.35,
-    reconnect_backoff_max = 8.0,
+    idle_command_interval = ROOM_SETTING_DEFAULTS.idle_command_interval,
+    active_command_interval = ROOM_SETTING_DEFAULTS.active_command_interval,
+    reconnect_backoff_max = ROOM_SETTING_DEFAULTS.reconnect_backoff_max,
     seek_lock = "yes",
-    seek_lock_threshold = 3.0,
+    seek_lock_threshold = ROOM_SETTING_DEFAULTS.seek_lock_threshold,
     auto_force_sync_on_seek = "yes",
-    host_seek_threshold = 2.5,
-    host_seek_cooldown = 1.5,
+    host_seek_threshold = ROOM_SETTING_DEFAULTS.host_seek_threshold,
+    host_seek_cooldown = ROOM_SETTING_DEFAULTS.host_seek_cooldown,
 }
 
 options.read_options(opts, "mpv-watch")
@@ -71,24 +91,29 @@ local function number_option(value, fallback, minimum, maximum)
     return number
 end
 
+local function room_number_option(name)
+    local limits = ROOM_SETTING_LIMITS[name]
+    return number_option(opts[name], ROOM_SETTING_DEFAULTS[name], limits.min, limits.max)
+end
+
 local function yes_no(value)
     return value and "yes" or "no"
 end
 
 local function command_interval()
-    return number_option(opts.command_interval, 0.5, 0.25, 3.0)
+    return room_number_option("command_interval")
 end
 
 local function idle_command_interval()
-    return number_option(opts.idle_command_interval, 1.25, 0.5, 5.0)
+    return room_number_option("idle_command_interval")
 end
 
 local function active_command_interval()
-    return number_option(opts.active_command_interval, 0.35, 0.25, 2.0)
+    return room_number_option("active_command_interval")
 end
 
 local function reconnect_backoff_max()
-    return number_option(opts.reconnect_backoff_max, 8.0, 1.0, 15.0)
+    return room_number_option("reconnect_backoff_max")
 end
 
 local function adaptive_polling_enabled()
@@ -745,15 +770,15 @@ local function register_observers()
             local elapsed = math.max(0, now - last_time_wall)
             local expected_time = last_time_pos + elapsed
             local drift = math.abs(current_time - expected_time)
-            local threshold = tonumber(opts.host_seek_threshold) or 2.5
-            local cooldown = tonumber(opts.host_seek_cooldown) or 1.5
+            local threshold = room_number_option("host_seek_threshold")
+            local cooldown = room_number_option("host_seek_cooldown")
             if drift >= threshold and now - last_auto_force_sync_at >= cooldown then
                 last_auto_force_sync_at = now
                 force_sync(current_time, "auto_seek")
             end
         elseif opts.role == "guest" and sync_enabled and opts.seek_lock == "yes" and last_host_state then
             local expected_host_time = projected_time(last_host_state)
-            local threshold = tonumber(opts.seek_lock_threshold) or 3.0
+            local threshold = room_number_option("seek_lock_threshold")
             if expected_host_time and math.abs(current_time - expected_host_time) >= threshold then
                 applying_remote_seek = true
                 mp.set_property_number("time-pos", expected_host_time)

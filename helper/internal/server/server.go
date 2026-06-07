@@ -1106,7 +1106,7 @@ func writeJSON(w http.ResponseWriter, status int, body any) {
 
 func withCORS(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Access-Control-Allow-Origin", "http://127.0.0.1:8765")
+		w.Header().Set("Access-Control-Allow-Origin", "http://"+config.DefaultAddr)
 		w.Header().Set("Access-Control-Allow-Headers", "Content-Type")
 		w.Header().Set("Access-Control-Allow-Methods", "GET,POST,DELETE,OPTIONS")
 		if r.Method == http.MethodOptions {

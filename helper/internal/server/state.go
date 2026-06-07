@@ -9,14 +9,16 @@ import (
 )
 
 type appState struct {
-	Addr        string        `json:"addr,omitempty"`
-	Role        string        `json:"role"`
-	RoomID      string        `json:"roomId"`
-	DisplayName string        `json:"displayName"`
-	UserID      string        `json:"userId"`
-	SyncEnabled bool          `json:"syncEnabled"`
-	ServerNow   int64         `json:"serverNow"`
-	Room        protocol.Room `json:"room"`
+	Addr                string                  `json:"addr,omitempty"`
+	Role                string                  `json:"role"`
+	RoomID              string                  `json:"roomId"`
+	DisplayName         string                  `json:"displayName"`
+	UserID              string                  `json:"userId"`
+	SyncEnabled         bool                    `json:"syncEnabled"`
+	ServerNow           int64                   `json:"serverNow"`
+	Room                protocol.Room           `json:"room"`
+	SettingsDefaults    protocol.RoomSettings   `json:"settingsDefaults"`
+	SettingsConstraints roomSettingsConstraints `json:"settingsConstraints"`
 }
 
 func (a *App) snapshotLocked(includeAddr bool) appState {
@@ -24,13 +26,15 @@ func (a *App) snapshotLocked(includeAddr bool) appState {
 	settings := effectiveRoomSettings(room.Settings)
 	room.Settings = &settings
 	snapshot := appState{
-		Role:        a.cfg.Role,
-		RoomID:      a.cfg.RoomID,
-		DisplayName: a.cfg.DisplayName,
-		UserID:      a.cfg.UserID,
-		SyncEnabled: a.syncEnabled,
-		ServerNow:   a.serverNowLocked(),
-		Room:        room,
+		Role:                a.cfg.Role,
+		RoomID:              a.cfg.RoomID,
+		DisplayName:         a.cfg.DisplayName,
+		UserID:              a.cfg.UserID,
+		SyncEnabled:         a.syncEnabled,
+		ServerNow:           a.serverNowLocked(),
+		Room:                room,
+		SettingsDefaults:    defaultRoomSettings(),
+		SettingsConstraints: defaultRoomSettingsConstraints(),
 	}
 	if includeAddr {
 		snapshot.Addr = a.cfg.Addr

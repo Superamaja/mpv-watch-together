@@ -6,6 +6,13 @@ import (
 	"flag"
 	"os"
 	"strings"
+
+	"mpv-watch-together/helper/internal/protocol"
+)
+
+const (
+	DefaultAddr        = "127.0.0.1:8765"
+	DefaultDisplayName = "mpv watcher"
 )
 
 type Config struct {
@@ -26,10 +33,10 @@ func Load(args []string, builtinFirebaseURL string) (Config, error) {
 	}
 
 	cfg := Config{
-		Addr:                envOrDefault("MPV_WATCH_ADDR", "127.0.0.1:8765"),
-		Role:                envOrDefault("MPV_WATCH_ROLE", "guest"),
+		Addr:                envOrDefault("MPV_WATCH_ADDR", DefaultAddr),
+		Role:                envOrDefault("MPV_WATCH_ROLE", protocol.RoleGuest),
 		RoomID:              os.Getenv("MPV_WATCH_ROOM"),
-		DisplayName:         envOrDefault("MPV_WATCH_DISPLAY_NAME", "mpv watcher"),
+		DisplayName:         envOrDefault("MPV_WATCH_DISPLAY_NAME", DefaultDisplayName),
 		UserID:              envOrDefault("MPV_WATCH_USER_ID", randomishID()),
 		FirebaseDatabaseURL: fbURL,
 	}
@@ -51,11 +58,11 @@ func Load(args []string, builtinFirebaseURL string) (Config, error) {
 	cfg.UserID = strings.TrimSpace(cfg.UserID)
 	cfg.FirebaseDatabaseURL = strings.TrimRight(strings.TrimSpace(cfg.FirebaseDatabaseURL), "/")
 
-	if cfg.Role != "host" && cfg.Role != "guest" {
+	if cfg.Role != protocol.RoleHost && cfg.Role != protocol.RoleGuest {
 		return Config{}, errors.New("role must be host or guest")
 	}
 	if cfg.DisplayName == "" {
-		cfg.DisplayName = "mpv watcher"
+		cfg.DisplayName = DefaultDisplayName
 	}
 	if cfg.UserID == "" {
 		cfg.UserID = randomishID()

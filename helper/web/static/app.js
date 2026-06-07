@@ -39,22 +39,16 @@ const els = {
 const STALE_MS = 20_000;
 const DRIFT_GREEN_S = 1;
 const DRIFT_AMBER_S = 3;
-const DEFAULT_ROOM_SETTINGS = {
-  polling: {
-    commandInterval: 0.5,
-    adaptivePolling: false,
-    idleInterval: 1.25,
-    activeInterval: 0.35,
-    reconnectBackoffMax: 8,
-  },
-  sync: {
-    seekLock: true,
-    seekLockThreshold: 3,
-    autoForceSyncOnSeek: true,
-    hostSeekThreshold: 2.5,
-    hostSeekCooldown: 1.5,
-  },
-};
+const EMPTY_ROOM_SETTINGS = { polling: {}, sync: {} };
+const NUMERIC_SETTING_INPUTS = [
+  { input: els.commandInterval, group: "polling", field: "commandInterval" },
+  { input: els.idleInterval, group: "polling", field: "idleInterval" },
+  { input: els.activeInterval, group: "polling", field: "activeInterval" },
+  { input: els.reconnectBackoffMax, group: "polling", field: "reconnectBackoffMax" },
+  { input: els.seekLockThreshold, group: "sync", field: "seekLockThreshold" },
+  { input: els.hostSeekThreshold, group: "sync", field: "hostSeekThreshold" },
+  { input: els.hostSeekCooldown, group: "sync", field: "hostSeekCooldown" },
+];
 
 let state = { syncEnabled: false, room: {} };
 let previousGuests = new Map();
@@ -136,13 +130,15 @@ function setupInitialDrawers(hasRoom) {
 }
 
 function effectiveSettings(settings) {
+  const defaults = state.settingsDefaults || EMPTY_ROOM_SETTINGS;
   return {
-    polling: { ...DEFAULT_ROOM_SETTINGS.polling, ...(settings?.polling || {}) },
-    sync: { ...DEFAULT_ROOM_SETTINGS.sync, ...(settings?.sync || {}) },
+    polling: { ...(defaults.polling || {}), ...(settings?.polling || {}) },
+    sync: { ...(defaults.sync || {}), ...(settings?.sync || {}) },
   };
 }
 
 function renderSettings(settings) {
+  applySettingsConstraints();
   const next = effectiveSettings(settings);
   const canEdit = state.role === "host" && !!state.roomId;
   els.settingsPanel.classList.toggle("is-disabled", !canEdit);
@@ -170,6 +166,23 @@ function renderSettings(settings) {
 
 function rangeInputs() {
   return document.querySelectorAll("[data-range-for]");
+}
+
+function applySettingsConstraints() {
+  const constraints = state.settingsConstraints || {};
+  for (const { input, group, field } of NUMERIC_SETTING_INPUTS) {
+    const constraint = constraints[group]?.[field];
+    if (!constraint) continue;
+    applyNumberConstraint(input, constraint);
+    applyNumberConstraint(document.querySelector(`[data-range-for="${input.id}"]`), constraint);
+  }
+}
+
+function applyNumberConstraint(input, constraint) {
+  if (!input) return;
+  if (Number.isFinite(constraint.min)) input.min = String(constraint.min);
+  if (Number.isFinite(constraint.max)) input.max = String(constraint.max);
+  if (Number.isFinite(constraint.step)) input.step = String(constraint.step);
 }
 
 function syncRangeFromNumber(numberInput) {
@@ -221,6 +234,7 @@ function readSettings() {
 }
 
 function readNumber(input, fallback) {
+  if (input.value.trim() === "") return fallback;
   const value = Number(input.value);
   return Number.isFinite(value) ? value : fallback;
 }
