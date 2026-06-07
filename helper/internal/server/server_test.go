@@ -70,6 +70,38 @@ func TestApplyRoomStreamEventDeletesNestedFields(t *testing.T) {
 	}
 }
 
+func TestProjectedParticipantTimeUsesElapsedPlayingTime(t *testing.T) {
+	projected := projectedParticipantTime(protocol.ParticipantState{
+		CurrentTime: 10,
+		IsPlaying:   true,
+		Duration:    60,
+		SampledAt:   1_000,
+	}, 3_500)
+
+	if projected != 12.5 {
+		t.Fatalf("projected time = %v, want 12.5", projected)
+	}
+}
+
+func TestProjectedParticipantTimeClampsToDuration(t *testing.T) {
+	projected := projectedParticipantTime(protocol.ParticipantState{
+		CurrentTime: 58,
+		IsPlaying:   true,
+		Duration:    60,
+		SampledAt:   1_000,
+	}, 6_000)
+
+	if projected != 60 {
+		t.Fatalf("projected time = %v, want 60", projected)
+	}
+}
+
+func TestDisplayNameOrIDFallsBackToGuest(t *testing.T) {
+	if got := displayNameOrID("", ""); got != "guest" {
+		t.Fatalf("display name = %q, want guest", got)
+	}
+}
+
 func streamEvent(t *testing.T, eventName string, path string, data any) firebase.StreamEvent {
 	t.Helper()
 	payload, err := json.Marshal(map[string]any{

@@ -7,6 +7,7 @@ import (
 	"io"
 	"io/fs"
 	"log/slog"
+	"math"
 	"math/rand"
 	"net/http"
 	"strings"
@@ -35,9 +36,11 @@ const (
 	eventGuestSynced    = "guest_synced"
 	eventHostLeft       = "host_left"
 	eventHostSynced     = "host_synced"
+	eventSyncToGuest    = "sync_to_guest"
 	eventTracksSynced   = "tracks_synced"
 
 	forceSyncReasonAutoSeek = "auto_seek"
+	forceSyncReasonToGuest  = "sync_to_guest"
 )
 
 type App struct {
@@ -89,6 +92,7 @@ func (a *App) Handler() http.Handler {
 	mux.HandleFunc("GET /api/mpv/commands", a.handleGetMPVCommands)
 	mux.HandleFunc("POST /api/sync", a.handlePostSync)
 	mux.HandleFunc("POST /api/host/force-sync", a.handlePostForceSync)
+	mux.HandleFunc("POST /api/host/sync-to-guest", a.handlePostSyncToGuest)
 	mux.HandleFunc("POST /api/host/track-sync", a.handlePostTrackSync)
 	mux.HandleFunc("POST /api/host/settings", a.handlePostHostSettings)
 	mux.HandleFunc("DELETE /api/host/settings", a.handleDeleteHostSettings)
@@ -586,6 +590,112 @@ func (a *App) handlePostForceSync(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, response)
 }
 
+func (a *App) handlePostSyncToGuest(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		UserID string `json:"userId"`
+	}
+	if !decodeJSON(w, r, &req) {
+		return
+	}
+	req.UserID = strings.TrimSpace(req.UserID)
+	if req.UserID == "" {
+		writeJSON(w, http.StatusBadRequest, apiError{Error: "userId is required"})
+		return
+	}
+
+	now := a.serverNow()
+	a.mu.RLock()
+	cfg := a.cfg
+	enabled := a.syncEnabled
+	lastLocal := a.lastLocal
+	room := a.room
+	guest, ok := room.Guests[req.UserID]
+	a.mu.RUnlock()
+	if cfg.Role != protocol.RoleHost {
+		writeJSON(w, http.StatusForbidden, apiError{Error: "sync to guest is only available for host role"})
+		return
+	}
+	if !enabled || cfg.RoomID == "" {
+		writeJSON(w, http.StatusBadRequest, apiError{Error: "sync must be enabled and room configured"})
+		return
+	}
+	if !ok {
+		writeJSON(w, http.StatusNotFound, apiError{Error: "guest not found"})
+		return
+	}
+	if guest.UserID == "" {
+		guest.UserID = req.UserID
+	}
+	if !a.isFreshParticipant(&guest, now, guestStaleAfter) {
+		writeJSON(w, http.StatusConflict, apiError{Error: "guest is offline"})
+		return
+	}
+	if guest.TimeReliable == false || !validPlaybackTime(guest.CurrentTime) {
+		writeJSON(w, http.StatusConflict, apiError{Error: "guest time is not reliable"})
+		return
+	}
+
+	hostState := lastLocal
+	if !validPlaybackTime(hostState.CurrentTime) && room.Host != nil {
+		hostState = *room.Host
+	}
+	targetTime := projectedParticipantTime(guest, now)
+	host := a.normalizeParticipant(cfg, hostState, now)
+	host.CurrentTime = targetTime
+	host.IsBuffering = false
+
+	force := protocol.ForceSync{
+		SyncID:            fmt.Sprintf("%s_to_%s_%d_%06d", cfg.UserID, guest.UserID, now, rand.Intn(1000000)),
+		IssuedAt:          now,
+		IssuedBy:          cfg.UserID,
+		Reason:            forceSyncReasonToGuest,
+		SourceUserID:      guest.UserID,
+		SourceDisplayName: guest.DisplayName,
+		ApplyToHost:       true,
+		CurrentTime:       targetTime,
+		IsPlaying:         host.IsPlaying,
+		IsBuffering:       false,
+		Duration:          host.Duration,
+		SampledAt:         now,
+	}
+
+	ctx, cancel := context.WithTimeout(r.Context(), 5*time.Second)
+	defer cancel()
+	patch := map[string]any{
+		"host":      host,
+		"forceSync": force,
+		"status":    "active",
+		"updatedAt": now,
+	}
+	if err := a.firebase.Patch(ctx, roomPath(cfg.RoomID), patch, nil); err != nil {
+		writeJSON(w, http.StatusBadGateway, apiError{Error: err.Error()})
+		return
+	}
+
+	a.mu.Lock()
+	a.lastLocal = host
+	a.room.Host = &host
+	a.room.ForceSync = &force
+	a.room.Status = "active"
+	a.room.UpdatedAt = now
+	a.mu.Unlock()
+	a.publishState()
+
+	sourceName := displayNameOrID(guest.DisplayName, guest.UserID)
+	message := "Synced room to " + sourceName
+	event := a.publishRoomEvent(context.Background(), cfg.RoomID, eventSyncToGuest, message, cfg.UserID, "success")
+	response := map[string]any{
+		"forceSync":         force,
+		"sourceUserId":      guest.UserID,
+		"sourceDisplayName": sourceName,
+		"message":           message,
+	}
+	if event != nil {
+		response["eventId"] = event.EventID
+	}
+	writeJSON(w, http.StatusOK, response)
+}
+
 func (a *App) handlePostTrackSync(w http.ResponseWriter, r *http.Request) {
 	a.mu.RLock()
 	cfg := a.cfg
@@ -651,6 +761,36 @@ func displayTrackID(value string) string {
 		return "off"
 	}
 	return value
+}
+
+func projectedParticipantTime(state protocol.ParticipantState, now int64) float64 {
+	currentTime := state.CurrentTime
+	if state.IsPlaying && !state.IsBuffering && state.SampledAt > 0 {
+		currentTime += math.Max(0, float64(now-state.SampledAt)/1000)
+	}
+	if currentTime < 0 {
+		return 0
+	}
+	if state.Duration > 0 && currentTime > state.Duration {
+		return state.Duration
+	}
+	return currentTime
+}
+
+func validPlaybackTime(value float64) bool {
+	return value >= 0 && !math.IsNaN(value) && !math.IsInf(value, 0)
+}
+
+func displayNameOrID(displayName string, userID string) string {
+	displayName = strings.TrimSpace(displayName)
+	if displayName != "" {
+		return displayName
+	}
+	userID = strings.TrimSpace(userID)
+	if userID != "" {
+		return userID
+	}
+	return "guest"
 }
 
 func decodeForceSyncRequest(w http.ResponseWriter, r *http.Request) (protocol.ParticipantState, bool, string, bool) {

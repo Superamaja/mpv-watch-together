@@ -161,6 +161,9 @@ local function should_show_event(event, user_id)
     if event.type == "force_sync" or event.type == "auto_force_sync" then
         return opts.role == "host"
     end
+    if event.type == "sync_to_guest" then
+        return false
+    end
     if event.type == "config_changed" then
         return true
     end
@@ -380,11 +383,14 @@ local function projected_time(state)
 end
 
 local function apply_remote_state(state, force)
-    if not sync_enabled or opts.role == "host" or not state then
+    if not sync_enabled or not state then
+        return
+    end
+    if opts.role == "host" and not state.applyToHost then
         return
     end
 
-    if type(state.currentTime) == "number" then
+    if opts.role ~= "host" and type(state.currentTime) == "number" then
         last_host_state = state
     end
 
@@ -405,6 +411,21 @@ local function apply_remote_state(state, force)
         mp.set_property_bool("pause", not state.isPlaying)
     end
     applying_remote_pause = false
+end
+
+local function force_sync_source_label(force_sync)
+    if type(force_sync) ~= "table" then
+        return "guest"
+    end
+    local name = trim(force_sync.sourceDisplayName)
+    if name ~= "" then
+        return name
+    end
+    local user_id = trim(force_sync.sourceUserId)
+    if user_id ~= "" then
+        return user_id
+    end
+    return "guest"
 end
 
 local function display_track_id(value)
@@ -524,6 +545,8 @@ poll_commands = function()
         apply_remote_state(data.forceSync, true)
         if data.forceSync.reason == "auto_seek" then
             show_message("synced to host seek")
+        elseif data.forceSync.reason == "sync_to_guest" then
+            show_message("synced to " .. force_sync_source_label(data.forceSync))
         else
             show_message("force synced")
         end

@@ -24,15 +24,18 @@ type ParticipantState struct {
 }
 
 type ForceSync struct {
-	SyncID      string  `json:"syncId"`
-	IssuedAt    int64   `json:"issuedAt"`
-	IssuedBy    string  `json:"issuedBy"`
-	Reason      string  `json:"reason,omitempty"`
-	CurrentTime float64 `json:"currentTime"`
-	IsPlaying   bool    `json:"isPlaying"`
-	IsBuffering bool    `json:"isBuffering"`
-	Duration    float64 `json:"duration"`
-	SampledAt   int64   `json:"sampledAt"`
+	SyncID            string  `json:"syncId"`
+	IssuedAt          int64   `json:"issuedAt"`
+	IssuedBy          string  `json:"issuedBy"`
+	Reason            string  `json:"reason,omitempty"`
+	SourceUserID      string  `json:"sourceUserId,omitempty"`
+	SourceDisplayName string  `json:"sourceDisplayName,omitempty"`
+	ApplyToHost       bool    `json:"applyToHost,omitempty"`
+	CurrentTime       float64 `json:"currentTime"`
+	IsPlaying         bool    `json:"isPlaying"`
+	IsBuffering       bool    `json:"isBuffering"`
+	Duration          float64 `json:"duration"`
+	SampledAt         int64   `json:"sampledAt"`
 }
 
 type TrackSync struct {
