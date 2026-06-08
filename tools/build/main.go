@@ -16,9 +16,27 @@ import (
 	"text/template"
 )
 
+const (
+	defaultBundleRoom       = "room123"
+	defaultHostDisplayName  = "Host"
+	defaultGuestDisplayName = "Guest"
+
+	envFirebaseDatabaseURL     = "FIREBASE_DATABASE_URL"
+	envDefaultRoom             = "MPV_WATCH_DEFAULT_ROOM"
+	envDefaultHostDisplayName  = "MPV_WATCH_DEFAULT_HOST_DISPLAY_NAME"
+	envDefaultGuestDisplayName = "MPV_WATCH_DEFAULT_GUEST_DISPLAY_NAME"
+)
+
 type target struct {
 	OS   string
 	Arch string
+}
+
+type buildDefaults struct {
+	Room        string
+	HostName    string
+	GuestName   string
+	FirebaseURL string
 }
 
 type bundleTemplateData struct {
@@ -44,13 +62,14 @@ func main() {
 	var zipBundles bool
 	var firebaseURL string
 
+	defaults := loadBuildDefaults(".env")
 	flag.StringVar(&targetList, "targets", defaultTargets(), "comma-separated GOOS-GOARCH targets")
-	flag.StringVar(&room, "room", "room123", "default room written to mpv-watch.conf")
-	flag.StringVar(&hostName, "host-name", "Host", "default host display name")
-	flag.StringVar(&guestName, "guest-name", "Guest", "default guest display name")
+	flag.StringVar(&room, "room", defaults.Room, "default room written to mpv-watch.conf")
+	flag.StringVar(&hostName, "host-name", defaults.HostName, "default host display name")
+	flag.StringVar(&guestName, "guest-name", defaults.GuestName, "default guest display name")
 	flag.StringVar(&outDir, "out", "dist", "release output directory")
 	flag.BoolVar(&zipBundles, "zip", true, "also write zip files under dist/packages")
-	flag.StringVar(&firebaseURL, "firebase-url", dotEnvValue(".env", "FIREBASE_DATABASE_URL"), "Firebase Database URL to bake into the binary")
+	flag.StringVar(&firebaseURL, "firebase-url", defaults.FirebaseURL, "Firebase Database URL to bake into the binary")
 	flag.Parse()
 
 	targets, err := parseTargets(targetList)
@@ -396,11 +415,28 @@ func title(value string) string {
 	return strings.ToUpper(value[:1]) + value[1:]
 }
 
-// dotEnvValue reads a single key from a .env file without setting env vars.
-func dotEnvValue(path string, key string) string {
+func loadBuildDefaults(path string) buildDefaults {
+	values := dotEnvValues(path)
+	return buildDefaults{
+		Room:        valueOrDefault(values[envDefaultRoom], defaultBundleRoom),
+		HostName:    valueOrDefault(values[envDefaultHostDisplayName], defaultHostDisplayName),
+		GuestName:   valueOrDefault(values[envDefaultGuestDisplayName], defaultGuestDisplayName),
+		FirebaseURL: strings.TrimSpace(values[envFirebaseDatabaseURL]),
+	}
+}
+
+func valueOrDefault(value string, fallback string) string {
+	if strings.TrimSpace(value) == "" {
+		return fallback
+	}
+	return strings.TrimSpace(value)
+}
+
+func dotEnvValues(path string) map[string]string {
+	values := map[string]string{}
 	f, err := os.Open(path)
 	if err != nil {
-		return ""
+		return values
 	}
 	defer f.Close()
 	scanner := bufio.NewScanner(f)
@@ -410,11 +446,11 @@ func dotEnvValue(path string, key string) string {
 			continue
 		}
 		k, v, ok := strings.Cut(line, "=")
-		if ok && strings.TrimSpace(k) == key {
-			return strings.Trim(strings.TrimSpace(v), `"'`)
+		if ok {
+			values[strings.TrimSpace(k)] = strings.Trim(strings.TrimSpace(v), `"'`)
 		}
 	}
-	return ""
+	return values
 }
 
 func mustGetwd() string {

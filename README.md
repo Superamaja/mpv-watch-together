@@ -77,6 +77,14 @@ Useful build options:
 .\scripts\build.ps1 -room movie-night -host-name Connor -guest-name Guest
 ```
 
+You can also put package defaults in `.env`; build flags still override these values when provided:
+
+```text
+MPV_WATCH_DEFAULT_ROOM=movie-night
+MPV_WATCH_DEFAULT_HOST_DISPLAY_NAME=Connor
+MPV_WATCH_DEFAULT_GUEST_DISPLAY_NAME=Guest
+```
+
 Skip zip generation if you only want folders:
 
 ```powershell
@@ -104,7 +112,7 @@ cd .\dist\mpv-watch-host-windows-amd64
 .\mpv-watch-helper.exe
 ```
 
-The release build bakes in `FIREBASE_DATABASE_URL` from the repo `.env` file. You can still override it at runtime with the `FIREBASE_DATABASE_URL` environment variable or `-firebase-url`.
+The release build bakes in `FIREBASE_DATABASE_URL` from the repo `.env` file. It also writes `.env` package defaults into each bundle's `script-opts/mpv-watch.conf`. You can still override Firebase at runtime with the `FIREBASE_DATABASE_URL` environment variable or `-firebase-url`.
 
 Open the host dashboard:
 

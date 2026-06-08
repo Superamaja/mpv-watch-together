@@ -1,6 +1,8 @@
 package main
 
 import (
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 )
@@ -116,5 +118,48 @@ func TestConfigTemplateOmitsRoomSettingDefaults(t *testing.T) {
 		if strings.Contains(doc, forbidden) {
 			t.Fatalf("config template should not write room setting default %q", forbidden)
 		}
+	}
+}
+
+func TestLoadBuildDefaultsUsesDotEnvPackageValues(t *testing.T) {
+	envPath := filepath.Join(t.TempDir(), ".env")
+	if err := os.WriteFile(envPath, []byte(strings.Join([]string{
+		"FIREBASE_DATABASE_URL=https://example.firebaseio.com",
+		"MPV_WATCH_DEFAULT_ROOM=movie-night",
+		"MPV_WATCH_DEFAULT_HOST_DISPLAY_NAME=Connor",
+		"MPV_WATCH_DEFAULT_GUEST_DISPLAY_NAME=Friend",
+	}, "\n")), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	defaults := loadBuildDefaults(envPath)
+	if defaults.Room != "movie-night" {
+		t.Fatalf("room = %q, want movie-night", defaults.Room)
+	}
+	if defaults.HostName != "Connor" {
+		t.Fatalf("host name = %q, want Connor", defaults.HostName)
+	}
+	if defaults.GuestName != "Friend" {
+		t.Fatalf("guest name = %q, want Friend", defaults.GuestName)
+	}
+	if defaults.FirebaseURL != "https://example.firebaseio.com" {
+		t.Fatalf("firebase url = %q, want example URL", defaults.FirebaseURL)
+	}
+}
+
+func TestLoadBuildDefaultsFallsBackWhenDotEnvValuesMissing(t *testing.T) {
+	defaults := loadBuildDefaults(filepath.Join(t.TempDir(), ".env"))
+
+	if defaults.Room != defaultBundleRoom {
+		t.Fatalf("room = %q, want %q", defaults.Room, defaultBundleRoom)
+	}
+	if defaults.HostName != defaultHostDisplayName {
+		t.Fatalf("host name = %q, want %q", defaults.HostName, defaultHostDisplayName)
+	}
+	if defaults.GuestName != defaultGuestDisplayName {
+		t.Fatalf("guest name = %q, want %q", defaults.GuestName, defaultGuestDisplayName)
+	}
+	if defaults.FirebaseURL != "" {
+		t.Fatalf("firebase url = %q, want empty", defaults.FirebaseURL)
 	}
 }
