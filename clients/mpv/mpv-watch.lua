@@ -670,8 +670,8 @@ local function show_menu()
 
     local actions = {
         { label = sync_enabled and "Turn sync off" or "Turn sync on", id = "toggle" },
-        { label = "Set display name", id = "name" },
-        { label = "Set room name", id = "room" },
+        { label = "Set name", id = "name" },
+        { label = "Set room", id = "room" },
     }
 
     if input_ok and input.select then
@@ -689,7 +689,7 @@ local function show_menu()
                 if id == "toggle" then
                     set_sync(not sync_enabled)
                 elseif id == "room" then
-                    prompt_text_next_tick("Room name:", opts.room, function(value)
+                    prompt_text_next_tick("Room:", opts.room, function(value)
                         local next_room = trim(value)
                         if next_room ~= "" and next_room ~= opts.room then
                             opts.room = next_room
@@ -703,7 +703,7 @@ local function show_menu()
                         end
                     end)
                 elseif id == "name" then
-                    prompt_text_next_tick("Display name:", opts.display_name, function(value)
+                    prompt_text_next_tick("Name:", opts.display_name, function(value)
                         local next_name = trim(value)
                         if next_name ~= "" and next_name ~= opts.display_name then
                             opts.display_name = next_name
