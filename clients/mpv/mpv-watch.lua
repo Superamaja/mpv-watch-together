@@ -689,7 +689,7 @@ local function show_menu()
                 if id == "toggle" then
                     set_sync(not sync_enabled)
                 elseif id == "room" then
-                    prompt_text_next_tick("Room", opts.room, function(value)
+                    prompt_text_next_tick("Room name:", opts.room, function(value)
                         local next_room = trim(value)
                         if next_room ~= "" and next_room ~= opts.room then
                             opts.room = next_room
