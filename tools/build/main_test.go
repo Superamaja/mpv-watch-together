@@ -7,7 +7,7 @@ import (
 	"testing"
 )
 
-func TestDefaultTargetsIncludeAppleSiliconMacOnly(t *testing.T) {
+func TestDefaultTargetsUseFastTestingMatrix(t *testing.T) {
 	targets, err := parseTargets(defaultTargets())
 	if err != nil {
 		t.Fatal(err)
@@ -25,10 +25,22 @@ func TestDefaultTargetsIncludeAppleSiliconMacOnly(t *testing.T) {
 			t.Fatalf("default target %d = %#v, want %#v", index, got, want[index])
 		}
 	}
+
+	wantRoles := map[target][]string{
+		{OS: "windows", Arch: "amd64"}: {roleHost, roleGuest},
+		{OS: "darwin", Arch: "arm64"}:  {roleGuest},
+	}
+	for _, target := range targets {
+		got := rolesForTarget(target)
+		want := wantRoles[target]
+		if strings.Join(got, ",") != strings.Join(want, ",") {
+			t.Fatalf("roles for %#v = %#v, want %#v", target, got, want)
+		}
+	}
 }
 
 func TestMacScriptsInstallAndRunFromBundle(t *testing.T) {
-	data := newBundleTemplateData("host", target{OS: "darwin", Arch: "arm64"}, "Host", "room123", "mpv-watch-helper")
+	data := newBundleTemplateData(roleGuest, target{OS: "darwin", Arch: "arm64"}, "Guest", "room123", "mpv-watch-helper")
 
 	installScript, err := renderTemplate("install-mpv-files.sh.tmpl", data)
 	if err != nil {
@@ -60,7 +72,7 @@ func TestMacScriptsInstallAndRunFromBundle(t *testing.T) {
 }
 
 func TestMacQuickstartUsesGeneratedScripts(t *testing.T) {
-	data := newBundleTemplateData("host", target{OS: "darwin", Arch: "arm64"}, "Host", "room123", "mpv-watch-helper")
+	data := newBundleTemplateData(roleGuest, target{OS: "darwin", Arch: "arm64"}, "Guest", "room123", "mpv-watch-helper")
 	doc, err := renderTemplate("QUICKSTART.md.tmpl", data)
 	if err != nil {
 		t.Fatal(err)
@@ -79,7 +91,7 @@ func TestMacQuickstartUsesGeneratedScripts(t *testing.T) {
 }
 
 func TestConfigTemplateUsesBundleValues(t *testing.T) {
-	data := newBundleTemplateData("guest", target{OS: "windows", Arch: "amd64"}, "Guest", "movie-night", "mpv-watch-helper.exe")
+	data := newBundleTemplateData(roleGuest, target{OS: "windows", Arch: "amd64"}, "Guest", "movie-night", "mpv-watch-helper.exe")
 	doc, err := renderTemplate("mpv-watch.conf.tmpl", data)
 	if err != nil {
 		t.Fatal(err)
@@ -96,7 +108,7 @@ func TestConfigTemplateUsesBundleValues(t *testing.T) {
 }
 
 func TestConfigTemplateOmitsRoomSettingDefaults(t *testing.T) {
-	data := newBundleTemplateData("guest", target{OS: "windows", Arch: "amd64"}, "Guest", "movie-night", "mpv-watch-helper.exe")
+	data := newBundleTemplateData(roleGuest, target{OS: "windows", Arch: "amd64"}, "Guest", "movie-night", "mpv-watch-helper.exe")
 	doc, err := renderTemplate("mpv-watch.conf.tmpl", data)
 	if err != nil {
 		t.Fatal(err)

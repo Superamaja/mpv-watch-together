@@ -17,6 +17,9 @@ import (
 )
 
 const (
+	roleHost  = "host"
+	roleGuest = "guest"
+
 	defaultBundleRoom       = "room123"
 	defaultHostDisplayName  = "Host"
 	defaultGuestDisplayName = "Guest"
@@ -104,9 +107,9 @@ func main() {
 		if err != nil {
 			fatal(err)
 		}
-		for _, role := range []string{"host", "guest"} {
+		for _, role := range rolesForTarget(target) {
 			displayName := hostName
-			if role == "guest" {
+			if role == roleGuest {
 				displayName = guestName
 			}
 			bundleDir, err := writeBundle(outDir, target, role, displayName, room, binaryPath)
@@ -198,7 +201,7 @@ func newBundleTemplateData(role string, target target, displayName string, room 
 		OptsDir:     "~/.config/mpv/script-opts/",
 		RunCommand:  "./" + binaryName,
 		IsDarwin:    target.OS == "darwin",
-		IsGuest:     role == "guest",
+		IsGuest:     role == roleGuest,
 		IsWindows:   target.OS == "windows",
 	}
 	if data.IsWindows {
@@ -406,6 +409,13 @@ func parseTargets(value string) ([]target, error) {
 
 func defaultTargets() string {
 	return "windows-amd64,darwin-arm64"
+}
+
+func rolesForTarget(target target) []string {
+	if target.OS == "darwin" && target.Arch == "arm64" {
+		return []string{roleGuest}
+	}
+	return []string{roleHost, roleGuest}
 }
 
 func title(value string) string {
