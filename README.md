@@ -1,17 +1,25 @@
 # mpv Watch Together
 
-Synchronized long-distance movie watching for mpv.
+Synchronized long-distance movie watching for mpv, with a small local helper, an mpv Lua client, Firebase Realtime Database room state, and a host-only browser dashboard.
 
-This project ships two pieces:
+## What Ships
 
-- a Go helper binary that talks to Firebase Realtime Database and serves the host dashboard
-- an mpv Lua script that reads/writes mpv playback state and talks to the local helper
+This project has two runtime pieces:
 
-The old Stremio/Tampermonkey project is archived in `archive/stremio-userscript/`.
+- `mpv-watch-helper`: a Go helper process that talks to Firebase and serves the local HTTP API.
+- `mpv-watch.lua`: an mpv Lua script that watches playback state, applies sync commands, and provides the `Ctrl+w` menu.
 
-## What You Give People
+The host helper serves the browser dashboard at:
 
-After a build, send the zip files in `dist/packages/`.
+```text
+http://127.0.0.1:8765
+```
+
+Guest helpers intentionally do not serve the dashboard. Guests keep the helper running and use mpv's `Ctrl+w` menu to set room/name and toggle sync.
+
+## Default Release Output
+
+Run a normal build and send the zip files from `dist/packages/`.
 
 ```text
 dist/packages/
@@ -20,7 +28,7 @@ dist/packages/
   mpv-watch-guest-darwin-arm64.zip
 ```
 
-The unzipped bundle folders are also written to `dist/` for inspection and local testing.
+The matching unzipped folders are also written to `dist/` for inspection and local smoke testing:
 
 ```text
 dist/
@@ -28,10 +36,6 @@ dist/
   mpv-watch-guest-windows-amd64/
   mpv-watch-guest-darwin-arm64/
 ```
-
-Give yourself the matching `host` zip. Give guests the matching `guest` zip for their OS/CPU.
-
-Only the host uses the browser dashboard. Guests keep the helper running in the background and use mpv's `Ctrl+w` menu.
 
 Each bundle contains:
 
@@ -49,6 +53,45 @@ install-mpv-files.sh
 run-helper.sh
 ```
 
+Give yourself the Windows host bundle. Give guests the matching guest bundle for their OS/CPU.
+
+## Configure Builds
+
+Create `.env` in the repo root before building:
+
+```text
+FIREBASE_DATABASE_URL=https://your-project-default-rtdb.firebaseio.com
+MPV_WATCH_DEFAULT_ROOM=room123
+MPV_WATCH_DEFAULT_HOST_DISPLAY_NAME=Host
+MPV_WATCH_DEFAULT_GUEST_DISPLAY_NAME=Guest
+```
+
+`FIREBASE_DATABASE_URL` is baked into the helper binary at build time. It can still be overridden when launching the helper with the `FIREBASE_DATABASE_URL` environment variable or `-firebase-url`.
+
+The `MPV_WATCH_DEFAULT_*` values are written into each generated `script-opts/mpv-watch.conf`. That file now only contains bundle-specific identity values:
+
+```text
+role=host
+room=room123
+display_name=Host
+```
+
+Build flags override `.env` package defaults:
+
+```powershell
+.\scripts\build.ps1 -room movie-night -host-name Connor -guest-name Guest
+```
+
+Useful build options:
+
+```powershell
+.\scripts\build.ps1 -targets windows-amd64,darwin-arm64
+.\scripts\build.ps1 -zip=false
+.\scripts\build.ps1 -firebase-url https://your-project-default-rtdb.firebaseio.com
+```
+
+The default target list is `windows-amd64,darwin-arm64`. The default role matrix is Windows host+guest and Apple Silicon macOS guest only.
+
 ## Build
 
 Windows PowerShell:
@@ -63,147 +106,171 @@ macOS/Linux shell:
 ./scripts/build.sh
 ```
 
-The default build creates Windows x64 host/guest bundles and an Apple Silicon Mac guest bundle. You can override OS/CPU targets:
-
-```powershell
-.\scripts\build.ps1 -targets windows-amd64,darwin-arm64
-```
-
-Useful build options:
-
-```powershell
-.\scripts\build.ps1 -room movie-night -host-name Connor -guest-name Guest
-```
-
-You can also put package defaults in `.env`; build flags still override these values when provided:
-
-```text
-MPV_WATCH_DEFAULT_ROOM=movie-night
-MPV_WATCH_DEFAULT_HOST_DISPLAY_NAME=Connor
-MPV_WATCH_DEFAULT_GUEST_DISPLAY_NAME=Guest
-```
-
-Skip zip generation if you only want folders:
-
-```powershell
-.\scripts\build.ps1 -zip=false
-```
-
-## Test the Build
-
-Run the test script:
+Run tests before handing off a release:
 
 ```powershell
 .\scripts\test.ps1
 ```
 
-Then build:
+If a rebuild fails with `Access is denied`, check for an old `mpv-watch-helper.exe` still running from `dist/`; Windows can lock the executable while the helper is open.
 
-```powershell
-.\scripts\build.ps1
-```
+## Install From a Bundle
 
-Start the Windows host bundle from the bundle folder:
-
-```powershell
-cd .\dist\mpv-watch-host-windows-amd64
-.\mpv-watch-helper.exe
-```
-
-The release build bakes in `FIREBASE_DATABASE_URL` from the repo `.env` file. It also writes `.env` package defaults into each bundle's `script-opts/mpv-watch.conf`. You can still override Firebase at runtime with the `FIREBASE_DATABASE_URL` environment variable or `-firebase-url`.
-
-Open the host dashboard:
-
-```text
-http://127.0.0.1:8765
-```
-
-The dashboard should show the configured room, a read-only sync status indicator, Force Sync and Push Tracks buttons, the host "Now Playing" state, and the guest roster. Sync is turned on or off from mpv (`Ctrl+w`), not the dashboard.
-
-Guest helpers intentionally do not serve the dashboard. If a guest opens `http://127.0.0.1:8765`, they should see a short message telling them to use mpv controls instead.
-
-## Test with mpv Locally
-
-Install the Lua script and options from the bundle:
+Copy these files into mpv's config folders:
 
 ```text
 scripts/mpv-watch.lua
 script-opts/mpv-watch.conf
 ```
 
-On Windows, typical mpv config folders are:
+Typical Windows folders:
 
 ```text
 %APPDATA%\mpv\scripts\
 %APPDATA%\mpv\script-opts\
 ```
 
-On macOS, typical mpv config folders are:
+Typical macOS folders:
 
 ```text
 ~/.config/mpv/scripts/
 ~/.config/mpv/script-opts/
 ```
 
-macOS bundles include an installer for the typical config folders:
+Portable mpv installs can use `portable_config/scripts/` and `portable_config/script-opts/` next to the mpv executable.
+
+macOS guest bundles include an installer:
 
 ```sh
 sh ./install-mpv-files.sh
 ```
 
-They also include a helper launcher that sets the executable bit before starting the binary:
+Start the helper from the bundle folder and keep it running while watching:
+
+```powershell
+.\mpv-watch-helper.exe
+```
+
+On macOS:
 
 ```sh
 sh ./run-helper.sh
 ```
 
-Open a video in mpv and press `Ctrl+w` for the Watch Together menu.
+Open a video in mpv and press `Ctrl+w`.
 
-For a same-machine smoke test, run the host helper and open mpv with the host config. Then start a second helper on another port for guest testing:
+## Host Flow
+
+1. Start the host helper from `dist/mpv-watch-host-windows-amd64`.
+2. Open `http://127.0.0.1:8765`.
+3. Open the video in mpv.
+4. Press `Ctrl+w` in mpv and turn sync on.
+
+The dashboard shows:
+
+- current host playback state
+- guest roster with online/offline, buffering, drift, last sync, and last-seen state
+- Force Sync
+- Push Tracks
+- room configuration
+- room settings
+- shared dashboard toasts for room events
+
+Sync is still turned on or off from mpv, not from the dashboard.
+
+## Guest Flow
+
+1. Start the guest helper.
+2. Install or copy the guest `mpv-watch.conf`.
+3. Open the video in mpv.
+4. Press `Ctrl+w`.
+5. Confirm the room and display name, then turn sync on.
+
+Guests cannot sync until a fresh host exists in the room. If no host is available, mpv shows:
+
+```text
+Watch Together: sync disabled: no host found in room
+```
+
+Synced guests are removed from Firebase on unsync, normal helper shutdown, host-loss auto-unsync, and host-side stale pruning.
+
+## Room Settings
+
+Room settings live once under the Firebase room as `settings`. mpv clients receive them through the existing command poll; there is no separate settings poll.
+
+The dashboard exposes:
+
+- command poll interval
+- adaptive polling
+- idle poll interval
+- active poll interval
+- reconnect max
+- seek lock
+- seek lock gap
+- auto sync seek
+- host seek gap
+- seek cooldown
+
+Save writes one room settings object. Reset deletes that Firebase settings object, so clients fall back to the helper's built-in defaults.
+
+Current built-in defaults:
+
+```text
+command poll: 0.5s
+adaptive polling: off
+idle poll: 1.25s
+active poll: 0.35s
+reconnect max: 8s
+seek lock: on
+seek lock gap: 3s
+auto sync seek: on
+host seek gap: 2.5s
+seek cooldown: 1.5s
+```
+
+## Local Smoke Test
+
+For same-machine guest testing, run the Windows host bundle normally, then start a guest helper on another port:
 
 ```powershell
 cd .\dist\mpv-watch-guest-windows-amd64
 .\mpv-watch-helper.exe -role guest -room room123 -name Guest -addr 127.0.0.1:8766
 ```
 
-For the guest mpv instance, temporarily set `helper_url=http://127.0.0.1:8766` in that guest `mpv-watch.conf`.
-
-## Firebase Setup
-
-Create a Firebase Realtime Database and put the URL in the repo `.env` before building:
+For the second mpv instance, temporarily set this in that guest `mpv-watch.conf`:
 
 ```text
-FIREBASE_DATABASE_URL=https://your-project-default-rtdb.firebaseio.com
+helper_url=http://127.0.0.1:8766
 ```
-
-For early private testing, Firebase test-mode rules are the fastest path. For anything shared more broadly, add proper auth/rules before distributing the app.
-
-If you need to change Firebase after building, set `FIREBASE_DATABASE_URL` in the helper process environment or pass `-firebase-url`.
 
 ## Troubleshooting
 
 ### Firebase 404 Not Found
 
-If the helper prints a warning like this:
+If the helper logs this:
 
 ```text
 firebase database path returned 404
 ```
 
-Check the bundle's `.env`. `FIREBASE_DATABASE_URL` must be the Realtime Database URL, not the Firebase auth domain, project ID, web app URL, or storage bucket.
+Confirm `FIREBASE_DATABASE_URL` is a Realtime Database URL, not a Firebase auth domain, project ID, web app URL, or storage bucket.
 
-Use a URL shaped like one of these:
+Valid shapes look like:
 
 ```text
 https://your-project-default-rtdb.firebaseio.com
 https://your-project-default-rtdb.REGION.firebasedatabase.app
 ```
 
-Also confirm Realtime Database is enabled in the Firebase console. A room that simply does not exist yet should not normally produce HTTP 404; the host will create/update the room after sync is enabled and mpv sends playback state.
+Also confirm Realtime Database is enabled in the Firebase console. A room that does not exist yet should not normally cause HTTP 404; the host creates/updates the room after sync is enabled and mpv sends playback state.
 
-### Startup Shows Empty Room
+### Dashboard Shows No Room At Startup
 
-This is normal if you start the helper without `-room` or `MPV_WATCH_ROOM`. The mpv Lua script posts the room from `mpv-watch.conf` after mpv starts.
+This is normal if the helper starts before mpv posts its config. The mpv Lua script posts room and display-name config when sync starts or when the `Ctrl+w` menu is opened.
+
+### Guest Opens The Dashboard
+
+Guest helpers return a short text message instead of the dashboard. This is intentional; guest controls live in mpv.
 
 ## Development Layout
 
@@ -218,29 +285,26 @@ helper/web/static                  host dashboard assets
 tools/build                        release bundle builder
 tools/build/templates              release bundle file templates
 scripts                            build/test wrappers
-archive/stremio-userscript         old Stremio userscript project
+windows-test.py                    local Windows smoke-test helper
 ```
 
-## Implemented Watch Features
+## Implemented Features
 
 - Explicit sync on/off from mpv.
-- Guests stay invisible until they turn sync on.
-- Guests cannot turn sync on unless a fresh host is present in the room.
-- Sync-on-join: guests seek to the host when enabling sync.
-- Guest OSD notification when a host is found after syncing.
-- Guest seek-lock: synced guests snap back if they scrub away.
-- Host auto force-sync after seeking.
+- `Ctrl+w` menu for sync, room, and display-name changes.
+- Guests stay invisible until sync is on.
+- Guests cannot sync unless a fresh host is present.
+- Sync-on-join seeks guests to the host.
+- Host-found and host-loss OSD notifications.
+- Guest seek-lock snaps guests back when they drift or scrub away.
+- Host auto force-sync after large seeks.
 - Host mpv auto-pauses when a synced guest starts buffering.
 - Firebase server-time calibration for timestamping, projection, and drift display.
-- Host dashboard guest list with online/offline state, buffering, drift, last sync time, and last-seen age.
-- Host dashboard one-shot audio/subtitle track push for synced guests.
-- Host dashboard room settings for polling cadence, adaptive polling, seek-lock, and host seek auto-sync thresholds.
-- Toast/OSD notifications for join, leave, guest buffering host-pause, force sync counts, host seek auto-sync, guest seek sync, connection loss/restored, room/name changes, and stale guest removal.
-- Synced participant cleanup: guests are deleted on unsync, normal helper shutdown, host-loss auto-unsync, and host-side stale pruning.
-- Host removal for stale/offline guests from the dashboard.
-- Guest helpers intentionally do not serve the browser dashboard.
+- Host dashboard roster, force sync, one-shot track push, room config, room settings, and stale guest removal.
+- Shared room-event notifications in the dashboard and mpv OSD where applicable.
+- Synced participant cleanup on unsync, shutdown, host loss, and stale pruning.
 
 ## Current Limitations
 
-- Control delegation is intentionally not implemented; host remains the only controller.
-- macOS users may need to approve the helper binary in Gatekeeper if it is unsigned.
+- Control delegation is intentionally not implemented; the host remains the only controller.
+- macOS users may need to approve the unsigned helper binary in Gatekeeper.
