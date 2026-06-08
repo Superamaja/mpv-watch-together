@@ -4,11 +4,6 @@ const els = {
   subtitle: document.querySelector("#subtitle"),
   roomChip: document.querySelector("#roomChip"),
   roomChipValue: document.querySelector("#roomChipValue"),
-  role: document.querySelector("#role"),
-  roomId: document.querySelector("#roomId"),
-  displayName: document.querySelector("#displayName"),
-  saveConfig: document.querySelector("#saveConfig"),
-  configDrawer: document.querySelector("#configDrawer"),
   settingsDrawer: document.querySelector("#settingsDrawer"),
   syncStatus: document.querySelector("#syncStatus"),
   syncStatusValue: document.querySelector("#syncStatusValue"),
@@ -57,7 +52,6 @@ let stateReceivedAt = Date.now();
 let lastRoomEventId = null;
 let eventStreamConnected = null;
 let settingsDirty = false;
-let didInitialDrawerSetup = false;
 
 async function api(path, options = {}) {
   const response = await fetch(path, {
@@ -80,12 +74,8 @@ function render(next) {
   stateReceivedAt = Date.now();
   notifyRoomEvent(state.room?.events?.latest);
 
-  els.role.value = state.role || "guest";
-  els.roomId.value = state.roomId || "";
-  els.displayName.value = state.displayName || "";
-
   const hasRoom = !!state.roomId;
-  els.subtitle.textContent = hasRoom ? "Local host dashboard" : "Choose a room to begin";
+  els.subtitle.textContent = hasRoom ? "Local host dashboard" : "Set a room from mpv";
   els.roomChip.hidden = !hasRoom;
   els.roomChipValue.textContent = state.roomId || "";
 
@@ -112,21 +102,14 @@ function render(next) {
     ? guests.map(([userId, guest]) => guestRow(userId, guest, state.room?.host)).join("")
     : `<div class="empty">No synced guests yet.</div>`;
 
-  setupInitialDrawers(hasRoom);
 }
 
 function syncHintText(state, synced) {
   if (state.role !== "host") return "Switch role to host to control the room.";
-  if (!state.roomId) return "Set a room in Room Configuration to begin.";
+  if (!state.roomId) return "Set a room from mpv (Ctrl+W) to begin.";
   return synced
     ? "You are hosting. Guests follow your playback."
     : "Turn sync on in mpv (Ctrl+W) to start hosting.";
-}
-
-function setupInitialDrawers(hasRoom) {
-  if (didInitialDrawerSetup) return;
-  didInitialDrawerSetup = true;
-  if (!hasRoom) els.configDrawer.open = true;
 }
 
 function effectiveSettings(settings) {
@@ -449,22 +432,6 @@ function escapeHTML(value) {
     "'": "&#39;",
   })[char]);
 }
-
-els.saveConfig.addEventListener("click", async () => {
-  try {
-    await api("/api/config", {
-      method: "POST",
-      body: JSON.stringify({
-        role: els.role.value,
-        roomId: els.roomId.value,
-        displayName: els.displayName.value,
-      }),
-    });
-    setStatus("Saved");
-  } catch (error) {
-    setStatus(error.message, false);
-  }
-});
 
 els.forceSync.addEventListener("click", async () => {
   try {

@@ -837,22 +837,6 @@ input[type="checkbox"] {
   border-top: 1px solid var(--border);
 }
 
-.config-grid {
-  display: grid;
-  grid-template-columns: 130px minmax(150px, 1fr) minmax(150px, 1fr) auto;
-  align-items: end;
-  gap: 12px;
-  padding-top: 16px;
-}
-
-.config-actions {
-  display: flex;
-}
-
-.config-actions .btn {
-  width: 100%;
-}
-
 /* ---------- Room settings ---------- */
 .drawer-body.is-disabled {
   opacity: 0.6;
@@ -1251,8 +1235,7 @@ input[type="checkbox"] {
 /* ---------- Responsive ---------- */
 @media (max-width: 900px) {
   .grid,
-  .settings-grid,
-  .config-grid {
+  .settings-grid {
     grid-template-columns: 1fr;
   }
 

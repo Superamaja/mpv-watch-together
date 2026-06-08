@@ -172,11 +172,10 @@ The dashboard shows:
 - guest roster with online/offline, buffering, drift, last sync, and last-seen state
 - Force Sync
 - Push Tracks
-- room configuration
 - room settings
 - shared dashboard toasts for room events
 
-Sync is still turned on or off from mpv, not from the dashboard.
+Room, display name, and sync on/off are controlled from mpv, not from the dashboard.
 
 ## Guest Flow
 
@@ -300,7 +299,7 @@ windows-test.py                    local Windows smoke-test helper
 - Host auto force-sync after large seeks.
 - Host mpv auto-pauses when a synced guest starts buffering.
 - Firebase server-time calibration for timestamping, projection, and drift display.
-- Host dashboard roster, force sync, one-shot track push, room config, room settings, and stale guest removal.
+- Host dashboard roster, force sync, one-shot track push, room settings, and stale guest removal.
 - Shared room-event notifications in the dashboard and mpv OSD where applicable.
 - Synced participant cleanup on unsync, shutdown, host loss, and stale pruning.
 
