@@ -35,6 +35,7 @@ local opts = {
     sync_on_start = "no",
     heartbeat_interval = 5.0,
     command_interval = ROOM_SETTING_DEFAULTS.command_interval,
+    max_reconnect_polls = 12,
     adaptive_polling = "no",
     idle_command_interval = ROOM_SETTING_DEFAULTS.idle_command_interval,
     active_command_interval = ROOM_SETTING_DEFAULTS.active_command_interval,
@@ -65,6 +66,7 @@ local host_found_notified = false
 local helper_connected = nil  -- nil=never tried, true=ok, false=was ok then lost
 local active_poll_until = 0
 local reconnect_poll_interval = nil
+local reconnect_poll_failures = 0
 local runtime_ready = false
 local observers_registered = false
 local heartbeat_timer = nil
@@ -117,6 +119,10 @@ local function reconnect_backoff_max()
     return room_number_option("reconnect_backoff_max")
 end
 
+local function max_reconnect_polls()
+    return math.floor(number_option(opts.max_reconnect_polls, 12, 1, 60))
+end
+
 local function adaptive_polling_enabled()
     return opts.adaptive_polling == "yes"
 end
@@ -160,6 +166,7 @@ end
 
 local function start_timers()
     helper_connected = nil
+    reconnect_poll_failures = 0
     ensure_heartbeat_timer()
     if not command_timer then
         schedule_command_poll(current_command_interval())
@@ -173,6 +180,7 @@ local function stop_timers()
         command_timer = nil
     end
     reconnect_poll_interval = nil
+    reconnect_poll_failures = 0
 end
 
 schedule_command_poll = function(delay)
@@ -548,6 +556,7 @@ end
 poll_commands = function()
     local data, err = helper_request("GET", "/api/mpv/commands")
     if err or not data then
+        reconnect_poll_failures = reconnect_poll_failures + 1
         if helper_connected == true then
             helper_connected = false
             show_message("connection lost, reconnecting")
@@ -555,6 +564,13 @@ poll_commands = function()
             helper_connected = false
         end
         stop_heartbeat_timer()
+        if reconnect_poll_failures >= max_reconnect_polls() then
+            sync_enabled = false
+            stop_timers()
+            show_message("sync disabled: helper unreachable")
+            msg.warn("Helper stayed unreachable after " .. reconnect_poll_failures .. " reconnect polls; sync disabled")
+            return
+        end
         if adaptive_polling_enabled() then
             local next_interval = reconnect_poll_interval or idle_command_interval()
             reconnect_poll_interval = math.min(next_interval * 1.5, reconnect_backoff_max())
@@ -566,6 +582,7 @@ poll_commands = function()
     end
     helper_connected = true
     reconnect_poll_interval = nil
+    reconnect_poll_failures = 0
     apply_room_settings(data.settings)
     if type(data.serverNow) == "number" then
         last_server_now = data.serverNow

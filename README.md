@@ -227,6 +227,8 @@ host seek gap: 2.5s
 seek cooldown: 1.5s
 ```
 
+mpv also has a local `max_reconnect_polls` option. It defaults to `12`; after that many failed helper command polls, mpv turns sync off locally and stops its timers.
+
 ## Local Smoke Test
 
 For same-machine guest testing, run the Windows host bundle normally, then start a guest helper on another port:
