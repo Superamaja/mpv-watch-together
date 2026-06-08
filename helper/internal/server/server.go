@@ -148,7 +148,6 @@ func (a *App) normalizeParticipant(cfg config.Config, state protocol.Participant
 	state.UserID = cfg.UserID
 	state.DisplayName = cfg.DisplayName
 	state.SampledAt = now
-	state.LastUpdated = now
 	state.LastSeen = now
 	state.Connected = true
 	state.TimeReliable = true
@@ -546,7 +545,6 @@ func (a *App) handlePostForceSync(w http.ResponseWriter, r *http.Request) {
 	host.UserID = cfg.UserID
 	host.DisplayName = cfg.DisplayName
 	host.SampledAt = now
-	host.LastUpdated = now
 	host.LastSeen = now
 	host.Connected = true
 

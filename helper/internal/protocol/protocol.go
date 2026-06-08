@@ -18,7 +18,6 @@ type ParticipantState struct {
 	SubtitleID   string  `json:"sid,omitempty"`
 	TimeReliable bool    `json:"timeReliable"`
 	SampledAt    int64   `json:"sampledAt"`
-	LastUpdated  int64   `json:"lastUpdated"`
 	LastSeen     int64   `json:"lastSeen"`
 	Connected    bool    `json:"connected"`
 }
