@@ -141,29 +141,38 @@ local function mark_active_polling(duration)
     active_poll_until = math.max(active_poll_until, mp.get_time() + (duration or 6.0))
 end
 
-local function start_timers()
-    helper_connected = nil
+local function stop_heartbeat_timer()
+    if heartbeat_timer then
+        heartbeat_timer:kill()
+        heartbeat_timer = nil
+    end
+    if pending_state_timer then
+        pending_state_timer:kill()
+        pending_state_timer = nil
+    end
+end
+
+local function ensure_heartbeat_timer()
     if not heartbeat_timer then
         heartbeat_timer = mp.add_periodic_timer(heartbeat_interval(), function() send_state() end)
     end
+end
+
+local function start_timers()
+    helper_connected = nil
+    ensure_heartbeat_timer()
     if not command_timer then
         schedule_command_poll(current_command_interval())
     end
 end
 
 local function stop_timers()
-    if heartbeat_timer then
-        heartbeat_timer:kill()
-        heartbeat_timer = nil
-    end
+    stop_heartbeat_timer()
     if command_timer then
         command_timer:kill()
         command_timer = nil
     end
-    if pending_state_timer then
-        pending_state_timer:kill()
-        pending_state_timer = nil
-    end
+    reconnect_poll_interval = nil
 end
 
 schedule_command_poll = function(delay)
@@ -545,6 +554,7 @@ poll_commands = function()
         else
             helper_connected = false
         end
+        stop_heartbeat_timer()
         if adaptive_polling_enabled() then
             local next_interval = reconnect_poll_interval or idle_command_interval()
             reconnect_poll_interval = math.min(next_interval * 1.5, reconnect_backoff_max())
@@ -573,9 +583,19 @@ poll_commands = function()
     if data.syncEnabled ~= nil then
         local was_sync_enabled = sync_enabled
         sync_enabled = data.syncEnabled
-        if was_sync_enabled and not sync_enabled and opts.role == "guest" then
-            host_found_notified = false
-            show_message("sync disabled: no host found in room")
+        if not sync_enabled then
+            stop_timers()
+            if was_sync_enabled then
+                host_found_notified = false
+                if opts.role == "guest" then
+                    show_message("sync disabled: no host found in room")
+                else
+                    show_message("sync disabled by helper")
+                end
+            end
+            return
+        elseif was_sync_enabled then
+            ensure_heartbeat_timer()
         end
     end
     if data.forceSync and data.forceSync.syncId and data.forceSync.syncId ~= last_force_sync_id then
