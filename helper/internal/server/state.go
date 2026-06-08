@@ -1,10 +1,12 @@
 package server
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"net/http"
 
+	"mpv-watch-together/helper/internal/config"
 	"mpv-watch-together/helper/internal/protocol"
 )
 
@@ -49,10 +51,16 @@ func (a *App) handleGetConfig(w http.ResponseWriter, r *http.Request) {
 }
 
 func (a *App) handleGetMPVCommands(w http.ResponseWriter, r *http.Request) {
-	a.mu.RLock()
-	defer a.mu.RUnlock()
+	now := a.serverNow()
+	var cleanupGuest config.Config
+
+	a.mu.Lock()
+	if a.cfg.Role == protocol.RoleGuest && a.syncEnabled && !a.isFreshParticipant(a.room.Host, now, hostPresenceGrace) {
+		a.syncEnabled = false
+		cleanupGuest = a.cfg
+	}
 	settings := effectiveRoomSettings(a.room.Settings)
-	writeJSON(w, http.StatusOK, protocol.CommandSnapshot{
+	snapshot := protocol.CommandSnapshot{
 		Role:        a.cfg.Role,
 		UserID:      a.cfg.UserID,
 		RoomID:      a.cfg.RoomID,
@@ -63,7 +71,14 @@ func (a *App) handleGetMPVCommands(w http.ResponseWriter, r *http.Request) {
 		LatestEvent: a.room.Events.Latest,
 		Settings:    &settings,
 		ServerNow:   a.serverNowLocked(),
-	})
+	}
+	a.mu.Unlock()
+
+	if cleanupGuest.RoomID != "" && cleanupGuest.UserID != "" {
+		a.removeGuestParticipant(context.Background(), cleanupGuest)
+		a.publishState()
+	}
+	writeJSON(w, http.StatusOK, snapshot)
 }
 
 func (a *App) handleEvents(w http.ResponseWriter, r *http.Request) {

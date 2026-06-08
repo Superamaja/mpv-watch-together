@@ -72,6 +72,7 @@ local command_timer = nil
 local pending_state_timer = nil
 local poll_commands = nil
 local set_sync = nil
+local shutdown_cleanup = nil
 local send_state = nil
 local ensure_runtime_ready = nil
 local schedule_command_poll = nil
@@ -307,6 +308,19 @@ set_sync = function(enabled)
         poll_commands()
     elseif not enabled then
         host_found_notified = false
+    end
+end
+
+shutdown_cleanup = function()
+    if not sync_enabled then
+        stop_timers()
+        return
+    end
+    sync_enabled = false
+    stop_timers()
+    local _, err = helper_request("POST", "/api/sync", { enabled = false })
+    if err then
+        msg.warn("Failed to clean up sync on shutdown: " .. err)
     end
 end
 
@@ -832,6 +846,10 @@ mp.add_key_binding("Ctrl+w", "mpv-watch-menu", function()
         post_config()
     end
     show_menu()
+end)
+
+mp.register_event("shutdown", function()
+    shutdown_cleanup()
 end)
 
 if opts.sync_on_start == "yes" then

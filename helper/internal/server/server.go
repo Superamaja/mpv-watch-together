@@ -123,6 +123,7 @@ func (a *App) Handler() http.Handler {
 func (a *App) Close() {
 	a.mu.Lock()
 	cfg := a.cfg
+	enabled := a.syncEnabled
 	if a.streamCancel != nil {
 		a.streamCancel()
 		a.streamCancel = nil
@@ -132,7 +133,12 @@ func (a *App) Close() {
 		a.appCancel()
 	}
 
-	if cfg.Role == protocol.RoleGuest && cfg.RoomID != "" && cfg.UserID != "" {
+	if !enabled || cfg.RoomID == "" || cfg.UserID == "" {
+		return
+	}
+	if cfg.Role == protocol.RoleHost {
+		a.removeHostParticipant(context.Background(), cfg, a.serverNow())
+	} else if cfg.Role == protocol.RoleGuest {
 		a.removeGuestParticipant(context.Background(), cfg)
 	}
 }
@@ -252,6 +258,10 @@ func (a *App) runCoordinatorTick() {
 		a.mu.Unlock()
 		return
 	}
+	hostTimedOut := a.syncEnabled && !a.isFreshParticipant(&a.lastLocal, now, hostPresenceGrace)
+	if hostTimedOut {
+		a.syncEnabled = false
+	}
 
 	pruneIDs := make([]string, 0)
 	events := make([]protocol.RoomEvent, 0)
@@ -280,6 +290,13 @@ func (a *App) runCoordinatorTick() {
 		}
 	}
 	a.mu.Unlock()
+
+	if hostTimedOut {
+		a.removeHostParticipant(a.appCtx, cfg, now)
+		a.publishRoomEvent(a.appCtx, cfg.RoomID, eventHostLeft, cfg.DisplayName+" stopped hosting", cfg.UserID, "warning")
+		a.publishState()
+		return
+	}
 
 	for _, guestID := range pruneIDs {
 		reqCtx, cancel := context.WithTimeout(a.appCtx, 5*time.Second)
@@ -479,6 +496,11 @@ func (a *App) handlePostSync(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	a.syncEnabled = *req.Enabled
+	if *req.Enabled && cfg.Role == protocol.RoleHost {
+		a.lastLocal.UserID = cfg.UserID
+		a.lastLocal.DisplayName = cfg.DisplayName
+		a.lastLocal.LastSeen = now
+	}
 	a.mu.Unlock()
 
 	if !*req.Enabled && cfg.Role == protocol.RoleGuest && cfg.RoomID != "" {
