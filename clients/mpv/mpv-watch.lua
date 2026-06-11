@@ -49,7 +49,8 @@ local opts = {
 
 options.read_options(opts, "mpv-watch")
 
-local sync_enabled = opts.sync_on_start == "yes"
+local sync_on_start = opts.sync_on_start == "yes"
+local sync_enabled = false
 local last_force_sync_id = nil
 local last_track_sync_id = nil
 local last_host_command_id = nil
@@ -73,6 +74,12 @@ local observers_registered = false
 local heartbeat_timer = nil
 local command_timer = nil
 local pending_state_timer = nil
+local state_request_in_flight = false
+local state_update_pending = false
+local poll_request_in_flight = false
+local sync_request_in_flight = false
+local force_sync_request_in_flight = false
+local runtime_generation = 0
 local poll_commands = nil
 local set_sync = nil
 local shutdown_cleanup = nil
@@ -157,6 +164,7 @@ local function stop_heartbeat_timer()
         pending_state_timer:kill()
         pending_state_timer = nil
     end
+    state_update_pending = false
 end
 
 local function ensure_heartbeat_timer()
@@ -170,7 +178,7 @@ local function start_timers()
     reconnect_poll_failures = 0
     ensure_heartbeat_timer()
     if not command_timer then
-        schedule_command_poll(current_command_interval())
+        schedule_command_poll(0)
     end
 end
 
@@ -185,7 +193,7 @@ local function stop_timers()
 end
 
 schedule_command_poll = function(delay)
-    if not sync_enabled or command_timer then
+    if not sync_enabled or command_timer or poll_request_in_flight then
         return
     end
     command_timer = mp.add_timeout(delay or current_command_interval(), function()
@@ -194,7 +202,6 @@ schedule_command_poll = function(delay)
             return
         end
         poll_commands()
-        schedule_command_poll(current_command_interval())
     end)
 end
 
@@ -228,10 +235,14 @@ local function show_message(message)
     mp.osd_message(OSD_PREFIX .. message)
 end
 
-local function helper_request(method, path, body)
+local function helper_args(method, path, body, max_time)
     local args = {
         "curl",
         "-sS",
+        "--connect-timeout",
+        "1.5",
+        "--max-time",
+        tostring(max_time or 6),
         "-X",
         method,
         "-H",
@@ -244,19 +255,22 @@ local function helper_request(method, path, body)
         args[#args + 1] = utils.format_json(body)
     end
     args[#args + 1] = opts.helper_url .. path
+    return args
+end
 
-    local result = utils.subprocess({
-        args = args,
-        cancellable = false,
-        max_size = 1024 * 1024,
-    })
-    if result.status ~= 0 then
-        return nil, result.error or result.stderr or "request failed"
+local function parse_helper_result(result)
+    if not result or result.status ~= 0 then
+        local process_error = result and trim(result.error_string) or ""
+        if process_error == "" then
+            process_error = result and trim(result.stderr) or ""
+        end
+        return nil, process_error ~= "" and process_error or "request failed"
     end
-    local body, status_text = result.stdout:match("^(.*)\n(%d%d%d)%s*$")
+    local stdout = result.stdout or ""
+    local body, status_text = stdout:match("^(.*)\n(%d%d%d)%s*$")
     local status = tonumber(status_text or "")
     if not status then
-        body = result.stdout
+        body = stdout
         status = 200
     end
 
@@ -267,7 +281,7 @@ local function helper_request(method, path, body)
         return {}, nil
     end
 
-    local parsed = utils.parse_json(body)
+    local parsed, parse_error = utils.parse_json(body)
     if status >= 400 then
         local message = "request failed with HTTP " .. status
         if type(parsed) == "table" and parsed.error then
@@ -275,60 +289,110 @@ local function helper_request(method, path, body)
         end
         return nil, message
     end
+    if parsed == nil then
+        return nil, parse_error or "invalid helper response"
+    end
     return parsed, nil
 end
 
-local function post_config()
-    local result, err = helper_request("POST", "/api/config", {
-        roomId = opts.room,
-        displayName = opts.display_name,
-    })
-    if err then
-        msg.warn("Failed to save helper config: " .. err)
-        return false
-    end
-    if result and result.eventId then
-        last_event_id = result.eventId
-    end
-    msg.debug("Saved helper config: room=" .. opts.room .. " displayName=" .. opts.display_name)
-    return true
+local function helper_command(method, path, body, max_time)
+    return {
+        -- Use the documented compatibility key for mpv builds that reject
+        -- _name in Lua command maps.
+        name = "subprocess",
+        playback_only = false,
+        capture_stdout = true,
+        capture_stderr = true,
+        capture_size = 1024 * 1024,
+        args = helper_args(method, path, body, max_time),
+    }
 end
 
-set_sync = function(enabled)
+local function helper_request(method, path, body, callback)
+    return mp.command_native_async(helper_command(method, path, body, 6), function(success, result, error_message)
+        if not success then
+            callback(nil, error_message or "request failed")
+            return
+        end
+        callback(parse_helper_result(result))
+    end)
+end
+
+local function helper_request_sync(method, path, body, max_time)
+    local result = mp.command_native(helper_command(method, path, body, max_time))
+    return parse_helper_result(result)
+end
+
+local function post_config(callback)
+    helper_request("POST", "/api/config", {
+        roomId = opts.room,
+        displayName = opts.display_name,
+    }, function(result, err)
+        if err then
+            msg.warn("Failed to save helper config: " .. err)
+            if callback then callback(false, err) end
+            return
+        end
+        if result and result.eventId then
+            last_event_id = result.eventId
+        end
+        msg.debug("Saved helper config: room=" .. opts.room .. " displayName=" .. opts.display_name)
+        if callback then callback(true, result) end
+    end)
+end
+
+set_sync = function(enabled, callback, quiet)
     if enabled and not ensure_runtime_ready() then
         sync_enabled = false
         stop_timers()
+        if callback then callback(false, "runtime unavailable") end
+        return
+    end
+    if sync_request_in_flight then
+        if callback then callback(false, "sync change already in progress") end
         return
     end
 
-    local _, err = helper_request("POST", "/api/sync", { enabled = enabled })
-    if err then
-        sync_enabled = false
-        stop_timers()
-        if enabled and err == "no host found in room" then
-            show_message("sync disabled: no host found in room")
-        else
-            show_message("helper unavailable")
+    sync_request_in_flight = true
+    helper_request("POST", "/api/sync", { enabled = enabled }, function(_, err)
+        sync_request_in_flight = false
+        if err then
+            if enabled then
+                sync_enabled = false
+                stop_timers()
+            end
+            if not quiet then
+                if enabled and err == "no host found in room" then
+                    show_message("sync disabled: no host found in room")
+                elseif enabled then
+                    show_message("sync unavailable: helper unreachable")
+                else
+                    show_message("could not turn sync off")
+                end
+            end
+            msg.warn("Failed to set sync: " .. err)
+            if callback then callback(false, err) end
+            return
         end
-        msg.warn("Failed to set sync: " .. err)
-        return
-    end
-    sync_enabled = enabled
-    if enabled then
-        mark_active_polling(8.0)
-        start_timers()
-        send_state()
-    else
-        stop_timers()
-    end
-    show_message(enabled and "sync on" or "sync off")
-    if enabled and opts.role == "guest" then
-        force_next_host_apply = true
-        host_found_notified = false
-        poll_commands()
-    elseif not enabled then
-        host_found_notified = false
-    end
+        runtime_generation = runtime_generation + 1
+        sync_enabled = enabled
+        if enabled then
+            mark_active_polling(8.0)
+            if opts.role == "guest" then
+                force_next_host_apply = true
+                host_found_notified = false
+            end
+            start_timers()
+            send_state()
+        else
+            stop_timers()
+            host_found_notified = false
+        end
+        if not quiet then
+            show_message(enabled and "sync on" or "sync off")
+        end
+        if callback then callback(true) end
+    end)
 end
 
 shutdown_cleanup = function()
@@ -338,36 +402,49 @@ shutdown_cleanup = function()
     end
     sync_enabled = false
     stop_timers()
-    local _, err = helper_request("POST", "/api/sync", { enabled = false })
+    local _, err = helper_request_sync("POST", "/api/sync", { enabled = false }, 2)
     if err then
         msg.warn("Failed to clean up sync on shutdown: " .. err)
     end
 end
 
-local function save_runtime_config(changed_room)
+local function save_runtime_config(changed_room, callback)
     if not ensure_runtime_ready() then
-        return false
+        if callback then callback(false) end
+        return
     end
 
     local was_synced = sync_enabled
+    local function save_config()
+        post_config(function(saved)
+            if changed_room then
+                last_host_state = nil
+                host_found_notified = false
+                force_next_host_apply = opts.role == "guest"
+                if was_synced and saved then
+                    set_sync(true, function(restored)
+                        if callback then callback(true, restored) end
+                    end, true)
+                    return
+                end
+            elseif saved and sync_enabled and send_state then
+                send_state()
+            end
+            if callback then callback(saved, true) end
+        end)
+    end
+
     if changed_room and was_synced then
-        set_sync(false)
+        set_sync(false, function(disabled)
+            if not disabled then
+                if callback then callback(false) end
+                return
+            end
+            save_config()
+        end, true)
+    else
+        save_config()
     end
-
-    local saved = post_config()
-
-    if changed_room then
-        last_host_state = nil
-        host_found_notified = false
-        force_next_host_apply = opts.role == "guest"
-        if was_synced then
-            set_sync(true)
-        end
-    elseif saved and sync_enabled and send_state then
-        send_state()
-    end
-
-    return saved
 end
 
 local function is_buffering()
@@ -414,10 +491,26 @@ send_state = function()
     if not sync_enabled then
         return
     end
-    local _, err = helper_request("POST", "/api/mpv/state", playback_state())
-    if err then
-        msg.warn("Failed to send playback state: " .. err)
+    if state_request_in_flight then
+        state_update_pending = true
+        return
     end
+    state_request_in_flight = true
+    state_update_pending = false
+    local request_generation = runtime_generation
+    helper_request("POST", "/api/mpv/state", playback_state(), function(_, err)
+        state_request_in_flight = false
+        if err then
+            msg.warn("Failed to send playback state: " .. err)
+        end
+        if request_generation ~= runtime_generation then
+            state_update_pending = sync_enabled
+        end
+        if state_update_pending and sync_enabled then
+            state_update_pending = false
+            send_state()
+        end
+    end)
 end
 
 local function queue_state_update()
@@ -557,109 +650,134 @@ local function apply_room_settings(settings)
 end
 
 poll_commands = function()
-    local data, err = helper_request("GET", "/api/mpv/commands")
-    if err or not data then
-        reconnect_poll_failures = reconnect_poll_failures + 1
-        if helper_connected == true then
-            helper_connected = false
-            show_message("connection lost, reconnecting")
-        else
-            helper_connected = false
-        end
-        stop_heartbeat_timer()
-        if reconnect_poll_failures >= max_reconnect_polls() then
-            sync_enabled = false
-            stop_timers()
-            show_message("sync disabled: helper unreachable")
-            msg.warn("Helper stayed unreachable after " .. reconnect_poll_failures .. " reconnect polls; sync disabled")
-            return
-        end
-        if adaptive_polling_enabled() then
-            local next_interval = reconnect_poll_interval or idle_command_interval()
-            reconnect_poll_interval = math.min(next_interval * 1.5, reconnect_backoff_max())
-        end
+    if not sync_enabled or poll_request_in_flight then
         return
     end
-    if helper_connected == false then
-        show_message("reconnected")
-    end
-    helper_connected = true
-    reconnect_poll_interval = nil
-    reconnect_poll_failures = 0
-    apply_room_settings(data.settings)
-    if type(data.serverNow) == "number" then
-        last_server_now = data.serverNow
-        last_server_wall = mp.get_time()
-    end
-    if data.latestEvent and data.latestEvent.eventId and data.latestEvent.eventId ~= last_event_id then
-        last_event_id = data.latestEvent.eventId
-        if should_show_event(data.latestEvent, data.userId) then
-            show_message(data.latestEvent.message)
+    poll_request_in_flight = true
+    local request_generation = runtime_generation
+
+    local function finish_poll()
+        poll_request_in_flight = false
+        if sync_enabled then
+            schedule_command_poll(current_command_interval())
         end
     end
-    if data.hostCommand and data.hostCommand.commandId and data.hostCommand.commandId ~= last_host_command_id then
-        last_host_command_id = data.hostCommand.commandId
-        if opts.role == "host" and data.hostCommand.type == "pause_for_guest_buffering" then
-            mp.set_property_bool("pause", true)
-            show_message(data.hostCommand.message or "Paused because a guest is buffering")
+
+    helper_request("GET", "/api/mpv/commands", nil, function(data, err)
+        if request_generation ~= runtime_generation then
+            finish_poll()
+            return
         end
-    end
-    if data.syncEnabled ~= nil then
-        local was_sync_enabled = sync_enabled
-        sync_enabled = data.syncEnabled
         if not sync_enabled then
-            stop_timers()
-            if was_sync_enabled then
-                host_found_notified = false
-                if opts.role == "guest" then
-                    show_message("sync disabled: no host found in room")
-                else
-                    show_message("sync disabled by helper")
-                end
-            end
+            poll_request_in_flight = false
             return
-        elseif was_sync_enabled then
-            ensure_heartbeat_timer()
         end
-    end
-    if data.forceSync and data.forceSync.syncId and data.forceSync.syncId ~= last_force_sync_id then
-        last_force_sync_id = data.forceSync.syncId
-        mark_active_polling(8.0)
-        apply_remote_state(data.forceSync, true)
-        if data.forceSync.reason == "auto_seek" then
-            show_message("synced to host seek")
-        elseif data.forceSync.reason == "sync_to_guest" then
-            show_message("synced to " .. force_sync_source_label(data.forceSync))
-        else
-            show_message("force synced")
+        if err or not data then
+            reconnect_poll_failures = reconnect_poll_failures + 1
+            if helper_connected == true then
+                show_message("connection lost, reconnecting")
+            end
+            helper_connected = false
+            stop_heartbeat_timer()
+            if reconnect_poll_failures >= max_reconnect_polls() then
+                local failure_count = reconnect_poll_failures
+                sync_enabled = false
+                stop_timers()
+                poll_request_in_flight = false
+                show_message("sync disabled: helper unreachable")
+                msg.warn("Helper stayed unreachable after " .. failure_count .. " reconnect polls; sync disabled")
+                return
+            end
+            if adaptive_polling_enabled() then
+                local next_interval = reconnect_poll_interval or idle_command_interval()
+                reconnect_poll_interval = math.min(next_interval * 1.5, reconnect_backoff_max())
+            end
+            finish_poll()
+            return
         end
-        return
-    end
-    if data.trackSync and data.trackSync.syncId and data.trackSync.syncId ~= last_track_sync_id then
-        last_track_sync_id = data.trackSync.syncId
-        mark_active_polling(6.0)
-        apply_track_sync(data.trackSync)
-    end
-    if data.host then
-        local force = force_next_host_apply
-        force_next_host_apply = false
-        if force then
+        if helper_connected == false then
+            show_message("reconnected")
+        end
+        helper_connected = true
+        reconnect_poll_interval = nil
+        reconnect_poll_failures = 0
+        ensure_heartbeat_timer()
+        apply_room_settings(data.settings)
+        if type(data.serverNow) == "number" then
+            last_server_now = data.serverNow
+            last_server_wall = mp.get_time()
+        end
+        if data.latestEvent and data.latestEvent.eventId and data.latestEvent.eventId ~= last_event_id then
+            last_event_id = data.latestEvent.eventId
+            if should_show_event(data.latestEvent, data.userId) then
+                show_message(data.latestEvent.message)
+            end
+        end
+        if data.hostCommand and data.hostCommand.commandId and data.hostCommand.commandId ~= last_host_command_id then
+            last_host_command_id = data.hostCommand.commandId
+            if opts.role == "host" and data.hostCommand.type == "pause_for_guest_buffering" then
+                mp.set_property_bool("pause", true)
+                show_message(data.hostCommand.message or "Paused because a guest is buffering")
+            end
+        end
+        if data.syncEnabled ~= nil then
+            local was_sync_enabled = sync_enabled
+            sync_enabled = data.syncEnabled
+            if not sync_enabled then
+                stop_timers()
+                poll_request_in_flight = false
+                if was_sync_enabled then
+                    host_found_notified = false
+                    if opts.role == "guest" then
+                        show_message("sync disabled: no host found in room")
+                    else
+                        show_message("sync disabled by helper")
+                    end
+                end
+                return
+            end
+        end
+        if data.forceSync and data.forceSync.syncId and data.forceSync.syncId ~= last_force_sync_id then
+            last_force_sync_id = data.forceSync.syncId
             mark_active_polling(8.0)
+            apply_remote_state(data.forceSync, true)
+            if data.forceSync.reason == "auto_seek" then
+                show_message("synced to host seek")
+            elseif data.forceSync.reason == "sync_to_guest" then
+                show_message("synced to " .. force_sync_source_label(data.forceSync))
+            else
+                show_message("force synced")
+            end
+            finish_poll()
+            return
         end
-        apply_remote_state(data.host, force)
-        if opts.role == "guest" and sync_enabled and not host_found_notified then
-            host_found_notified = true
-            show_message(force and "host found, synced" or "host found")
-        elseif force then
-            show_message("synced to host")
+        if data.trackSync and data.trackSync.syncId and data.trackSync.syncId ~= last_track_sync_id then
+            last_track_sync_id = data.trackSync.syncId
+            mark_active_polling(6.0)
+            apply_track_sync(data.trackSync)
         end
-    elseif opts.role == "guest" and sync_enabled then
-        host_found_notified = false
-    end
+        if data.host then
+            local force = force_next_host_apply
+            force_next_host_apply = false
+            if force then
+                mark_active_polling(8.0)
+            end
+            apply_remote_state(data.host, force)
+            if opts.role == "guest" and sync_enabled and not host_found_notified then
+                host_found_notified = true
+                show_message(force and "host found, synced" or "host found")
+            elseif force then
+                show_message("synced to host")
+            end
+        elseif opts.role == "guest" and sync_enabled then
+            host_found_notified = false
+        end
+        finish_poll()
+    end)
 end
 
 local function force_sync(current_time, reason)
-    if not ensure_runtime_ready() then
+    if not ensure_runtime_ready() or force_sync_request_in_flight then
         return
     end
 
@@ -672,20 +790,23 @@ local function force_sync(current_time, reason)
         state.reason = reason
     end
 
-    local result, err = helper_request("POST", "/api/host/force-sync", state)
-    if err then
-        show_message("force sync failed")
-        msg.warn("Force sync failed: " .. err)
-        return
-    end
-    if result and result.message then
-        if result.eventId then
-            last_event_id = result.eventId
+    force_sync_request_in_flight = true
+    helper_request("POST", "/api/host/force-sync", state, function(result, err)
+        force_sync_request_in_flight = false
+        if err then
+            show_message("force sync failed")
+            msg.warn("Force sync failed: " .. err)
+            return
         end
-        show_message(result.message)
-    else
-        show_message("force sync sent")
-    end
+        if result and result.message then
+            if result.eventId then
+                last_event_id = result.eventId
+            end
+            show_message(result.message)
+        else
+            show_message("force sync sent")
+        end
+    end)
 end
 
 local function prompt_text(prompt, default, callback)
@@ -736,12 +857,20 @@ local function show_menu()
                     prompt_text_next_tick("Room:", opts.room, function(value)
                         local next_room = trim(value)
                         if next_room ~= "" and next_room ~= opts.room then
+                            local previous_room = opts.room
                             opts.room = next_room
-                            if save_runtime_config(true) then
-                                show_message("room set to " .. opts.room)
-                            else
-                                show_message("room update failed")
-                            end
+                            save_runtime_config(true, function(saved, sync_restored)
+                                if saved then
+                                    if sync_restored == false then
+                                        show_message("room set to " .. opts.room .. "; sync remains off")
+                                    else
+                                        show_message("room set to " .. opts.room)
+                                    end
+                                else
+                                    opts.room = previous_room
+                                    show_message("room update failed")
+                                end
+                            end)
                         elseif next_room == opts.room then
                             show_message("room unchanged")
                         end
@@ -750,12 +879,16 @@ local function show_menu()
                     prompt_text_next_tick("Name:", opts.display_name, function(value)
                         local next_name = trim(value)
                         if next_name ~= "" and next_name ~= opts.display_name then
+                            local previous_name = opts.display_name
                             opts.display_name = next_name
-                            if save_runtime_config(false) then
-                                show_message("name set to " .. opts.display_name)
-                            else
-                                show_message("name update failed")
-                            end
+                            save_runtime_config(false, function(saved)
+                                if saved then
+                                    show_message("name set to " .. opts.display_name)
+                                else
+                                    opts.display_name = previous_name
+                                    show_message("name update failed")
+                                end
+                            end)
                         elseif next_name == opts.display_name then
                             show_message("name unchanged")
                         end
@@ -896,10 +1029,15 @@ mp.register_event("shutdown", function()
     shutdown_cleanup()
 end)
 
-if opts.sync_on_start == "yes" then
+if sync_on_start then
     if ensure_runtime_ready() then
         config_pushed = true
-        post_config()
-        set_sync(true)
+        post_config(function(saved)
+            if saved then
+                set_sync(true)
+            else
+                show_message("sync unavailable: config update failed")
+            end
+        end)
     end
 end
