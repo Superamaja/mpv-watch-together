@@ -275,6 +275,57 @@ func TestPostSyncSeedsHostPresenceGrace(t *testing.T) {
 	}
 }
 
+func TestPostSyncClearsPreviousHostSessionCommands(t *testing.T) {
+	fb, recorder := newRecordingFirebase(t)
+	app := &App{
+		cfg: config.Config{
+			Role:        protocol.RoleHost,
+			RoomID:      "room123",
+			UserID:      "host",
+			DisplayName: "Host",
+		},
+		firebase: fb,
+		room: protocol.Room{
+			ForceSync: &protocol.ForceSync{SyncID: "old-force"},
+			TrackSync: &protocol.TrackSync{SyncID: "old-tracks"},
+			Events: protocol.RoomEvents{
+				Latest: &protocol.RoomEvent{EventID: "old-event"},
+			},
+		},
+		subscribers:         map[chan []byte]struct{}{},
+		guestBufferingSince: map[string]int64{},
+	}
+
+	w := httptest.NewRecorder()
+	r := httptest.NewRequest(http.MethodPost, "/api/sync", strings.NewReader(`{"enabled":true}`))
+	app.handlePostSync(w, r)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("status = %d, want %d", w.Code, http.StatusOK)
+	}
+	if app.room.ForceSync != nil || app.room.TrackSync != nil {
+		t.Fatalf("transient commands were not cleared: %+v", app.room)
+	}
+
+	var foundClear bool
+	for _, request := range recorder.snapshot() {
+		if request.Method != http.MethodPatch || request.Path != "/rooms/room123.json" {
+			continue
+		}
+		var patch map[string]any
+		if err := json.Unmarshal(request.Body, &patch); err != nil {
+			t.Fatal(err)
+		}
+		if _, ok := patch["forceSync"]; ok {
+			foundClear = patch["forceSync"] == nil && patch["trackSync"] == nil && patch["events"] == nil
+			break
+		}
+	}
+	if !foundClear {
+		t.Fatalf("session reset patch not found; requests = %+v", recorder.snapshot())
+	}
+}
+
 func TestPostConfigPreservesBundleRole(t *testing.T) {
 	app := &App{
 		cfg: config.Config{

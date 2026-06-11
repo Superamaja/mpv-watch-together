@@ -477,6 +477,12 @@ func (a *App) handlePostSync(w http.ResponseWriter, r *http.Request) {
 		a.refreshRoom(r.Context(), cfg.RoomID)
 		now = a.serverNow()
 	}
+	if *req.Enabled && cfg.Role == protocol.RoleHost && cfg.RoomID != "" {
+		if err := a.clearTransientRoomState(r.Context(), cfg.RoomID, now); err != nil {
+			writeJSON(w, http.StatusBadGateway, apiError{Error: err.Error()})
+			return
+		}
+	}
 
 	a.mu.Lock()
 	cfg = a.cfg
@@ -1095,11 +1101,38 @@ func (a *App) removeHostParticipant(ctx context.Context, cfg config.Config, now 
 		slog.Warn("failed to remove host participant", "room", cfg.RoomID, "user", cfg.UserID, "error", err)
 	}
 	if err := a.firebase.Patch(reqCtx, roomPath(cfg.RoomID), map[string]any{
+		"events":    nil,
+		"forceSync": nil,
 		"status":    "inactive",
+		"trackSync": nil,
 		"updatedAt": now,
 	}, nil); err != nil {
 		slog.Warn("failed to mark room inactive", "room", cfg.RoomID, "error", err)
 	}
+}
+
+func (a *App) clearTransientRoomState(ctx context.Context, roomID string, now int64) error {
+	reqCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
+	defer cancel()
+	if err := a.firebase.Patch(reqCtx, roomPath(roomID), map[string]any{
+		"events":    nil,
+		"forceSync": nil,
+		"trackSync": nil,
+		"updatedAt": now,
+	}, nil); err != nil {
+		return fmt.Errorf("clear previous room session: %w", err)
+	}
+
+	a.mu.Lock()
+	if a.cfg.RoomID == roomID {
+		a.room.Events = protocol.RoomEvents{}
+		a.room.ForceSync = nil
+		a.room.TrackSync = nil
+		a.room.UpdatedAt = now
+	}
+	a.mu.Unlock()
+	a.publishState()
+	return nil
 }
 
 func decodeJSON(w http.ResponseWriter, r *http.Request, target any) bool {
