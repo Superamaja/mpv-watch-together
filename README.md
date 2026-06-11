@@ -6,7 +6,7 @@ Synchronized long-distance movie watching for mpv, with a small local helper, an
 
 This project has two runtime pieces:
 
-- `mpv-watch-helper`: a Go helper process that talks to Firebase and serves the local HTTP API.
+- `mpv-watch-helper`: a role-specific Go helper process that talks to Firebase and serves the local HTTP API.
 - `mpv-watch.lua`: an mpv Lua script that watches playback state, applies sync commands, and provides the `Ctrl+w` menu.
 
 The host helper serves the browser dashboard at:
@@ -53,7 +53,7 @@ install-mpv-files.sh
 run-helper.sh
 ```
 
-Give yourself the Windows host bundle. Give guests the matching guest bundle for their OS/CPU.
+Give yourself the Windows host bundle. Give guests the matching guest bundle for their OS/CPU. Host and guest helper roles are fixed into their release binaries and cannot be changed at runtime.
 
 ## Configure Builds
 
@@ -68,7 +68,9 @@ MPV_WATCH_DEFAULT_GUEST_DISPLAY_NAME=Guest
 
 `FIREBASE_DATABASE_URL` is baked into the helper binary at build time. It can still be overridden when launching the helper with the `FIREBASE_DATABASE_URL` environment variable or `-firebase-url`.
 
-The `MPV_WATCH_DEFAULT_*` values are written into each generated `script-opts/mpv-watch.conf`. That file now only contains bundle-specific identity values:
+The build also bakes the bundle role into each helper binary. Release helpers reject `-role`; an unbundled development build still supports `-role host` for local development.
+
+The `MPV_WATCH_DEFAULT_*` values are written into each generated `script-opts/mpv-watch.conf`. That file contains the matching mpv-side role and identity values:
 
 ```text
 role=host
@@ -188,7 +190,7 @@ Room, display name, and sync on/off are controlled from mpv, not from the dashbo
 Guests cannot sync until a fresh host exists in the room. If no host is available, mpv shows:
 
 ```text
-Watch Together: sync disabled: no host found in room
+Watch Together: Sync disabled: no host found in room
 ```
 
 Synced guests are removed from Firebase on unsync, normal helper shutdown, host-loss auto-unsync, and host-side stale pruning.
@@ -229,13 +231,15 @@ seek cooldown: 1.5s
 
 mpv also has a local `max_reconnect_polls` option. It defaults to `12`; after that many failed helper command polls, mpv turns sync off locally and stops its timers.
 
+Normal helper requests run asynchronously with connection and total timeouts, so a slow or unreachable helper does not block mpv's playback event loop. The shutdown cleanup request is synchronous but capped at two seconds so participant removal has a chance to finish before mpv exits.
+
 ## Local Smoke Test
 
 For same-machine guest testing, run the Windows host bundle normally, then start a guest helper on another port:
 
 ```powershell
 cd .\dist\mpv-watch-guest-windows-amd64
-.\mpv-watch-helper.exe -role guest -room room123 -name Guest -addr 127.0.0.1:8766
+.\mpv-watch-helper.exe -room room123 -name Guest -addr 127.0.0.1:8766
 ```
 
 For the second mpv instance, temporarily set this in that guest `mpv-watch.conf`:
@@ -299,13 +303,16 @@ windows-test.py                    local Windows smoke-test helper
 - Host-found and host-loss OSD notifications.
 - Guest seek-lock snaps guests back when they drift or scrub away.
 - Host auto force-sync after large seeks.
-- Host mpv auto-pauses when a synced guest starts buffering.
+- Host mpv auto-pauses through a durable command when a synced guest starts buffering.
 - Firebase server-time calibration for timestamping, projection, and drift display.
 - Host dashboard roster, force sync, one-shot track push, room settings, and stale guest removal.
-- Shared room-event notifications in the dashboard and mpv OSD where applicable.
+- Shared room-event notifications in the dashboard and mpv OSD, with command/event ID deduplication and transition-based buffering notices.
+- Host sessions clear old force-sync, track-sync, buffering, and notification state before accepting new commands.
+- Runtime helper requests are asynchronous and bounded by curl timeouts.
 - Synced participant cleanup on unsync, shutdown, host loss, and stale pruning.
 
 ## Current Limitations
 
 - Control delegation is intentionally not implemented; the host remains the only controller.
+- Firebase authentication is not implemented; use a dedicated database and only share bundles with people you trust.
 - macOS users may need to approve the unsigned helper binary in Gatekeeper.
