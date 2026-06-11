@@ -108,6 +108,18 @@ func TestDisplayNameOrIDFallsBackToGuest(t *testing.T) {
 	}
 }
 
+func TestGuestCountLabelUsesCorrectPlural(t *testing.T) {
+	for count, want := range map[int]string{
+		0: "0 guests",
+		1: "1 guest",
+		2: "2 guests",
+	} {
+		if got := guestCountLabel(count); got != want {
+			t.Fatalf("guest count label for %d = %q, want %q", count, got, want)
+		}
+	}
+}
+
 func TestCloseRemovesSyncedGuestParticipant(t *testing.T) {
 	fb, recorder := newRecordingFirebase(t)
 	app := &App{

@@ -61,6 +61,7 @@ local applying_remote_seek = false
 local applying_remote_pause = false
 local force_next_host_apply = false
 local last_host_state = nil
+local host_buffering_notified = false
 local last_time_pos = nil
 local last_time_wall = nil
 local last_auto_force_sync_at = 0
@@ -80,6 +81,8 @@ local poll_request_in_flight = false
 local sync_request_in_flight = false
 local force_sync_request_in_flight = false
 local runtime_generation = 0
+local last_osd_message = nil
+local last_osd_message_at = 0
 local poll_commands = nil
 local set_sync = nil
 local shutdown_cleanup = nil
@@ -190,6 +193,7 @@ local function stop_timers()
     end
     reconnect_poll_interval = nil
     reconnect_poll_failures = 0
+    host_buffering_notified = false
 end
 
 schedule_command_poll = function(delay)
@@ -231,7 +235,17 @@ local function trim(value)
     return value:gsub("^%s+", ""):gsub("%s+$", "")
 end
 
-local function show_message(message)
+local function show_message(message, duplicate_window)
+    message = trim(message)
+    if message == "" then
+        return
+    end
+    local now = mp.get_time()
+    if message == last_osd_message and now - last_osd_message_at < (duplicate_window or 1.5) then
+        return
+    end
+    last_osd_message = message
+    last_osd_message_at = now
     mp.osd_message(OSD_PREFIX .. message)
 end
 
@@ -363,11 +377,11 @@ set_sync = function(enabled, callback, quiet)
             end
             if not quiet then
                 if enabled and err == "no host found in room" then
-                    show_message("sync disabled: no host found in room")
+                    show_message("Sync disabled: no host found in room")
                 elseif enabled then
-                    show_message("sync unavailable: helper unreachable")
+                    show_message("Sync unavailable: helper unreachable")
                 else
-                    show_message("could not turn sync off")
+                    show_message("Could not turn sync off")
                 end
             end
             msg.warn("Failed to set sync: " .. err)
@@ -389,7 +403,7 @@ set_sync = function(enabled, callback, quiet)
             host_found_notified = false
         end
         if not quiet then
-            show_message(enabled and "sync on" or "sync off")
+            show_message(enabled and "Sync on" or "Sync off")
         end
         if callback then callback(true) end
     end)
@@ -558,8 +572,12 @@ local function apply_remote_state(state, force)
     applying_remote_pause = true
     if state.isBuffering then
         mp.set_property_bool("pause", true)
-        show_message("host is buffering")
+        if not host_buffering_notified then
+            host_buffering_notified = true
+            show_message("Paused because host is buffering")
+        end
     else
+        host_buffering_notified = false
         mp.set_property_bool("pause", not state.isPlaying)
     end
     applying_remote_pause = false
@@ -602,7 +620,7 @@ local function apply_track_sync(track_sync)
     if track_sync.sid ~= nil and tostring(track_sync.sid) ~= "" then
         mp.set_property("sid", tostring(track_sync.sid))
     end
-    show_message("received tracks - audio " .. display_track_id(track_sync.aid) .. ", subtitles " .. display_track_id(track_sync.sid))
+    show_message("Tracks updated: audio " .. display_track_id(track_sync.aid) .. ", subtitles " .. display_track_id(track_sync.sid))
 end
 
 local function apply_room_settings(settings)
@@ -675,7 +693,7 @@ poll_commands = function()
         if err or not data then
             reconnect_poll_failures = reconnect_poll_failures + 1
             if helper_connected == true then
-                show_message("connection lost, reconnecting")
+                show_message("Connection lost; reconnecting")
             end
             helper_connected = false
             stop_heartbeat_timer()
@@ -684,7 +702,7 @@ poll_commands = function()
                 sync_enabled = false
                 stop_timers()
                 poll_request_in_flight = false
-                show_message("sync disabled: helper unreachable")
+                show_message("Sync disabled: helper unreachable")
                 msg.warn("Helper stayed unreachable after " .. failure_count .. " reconnect polls; sync disabled")
                 return
             end
@@ -696,7 +714,7 @@ poll_commands = function()
             return
         end
         if helper_connected == false then
-            show_message("reconnected")
+            show_message("Reconnected")
         end
         helper_connected = true
         reconnect_poll_interval = nil
@@ -729,9 +747,9 @@ poll_commands = function()
                 if was_sync_enabled then
                     host_found_notified = false
                     if opts.role == "guest" then
-                        show_message("sync disabled: no host found in room")
+                        show_message("Sync disabled: no host found in room")
                     else
-                        show_message("sync disabled by helper")
+                        show_message("Sync disabled by helper")
                     end
                 end
                 return
@@ -742,11 +760,11 @@ poll_commands = function()
             mark_active_polling(8.0)
             apply_remote_state(data.forceSync, true)
             if data.forceSync.reason == "auto_seek" then
-                show_message("synced to host seek")
+                show_message("Synced to host seek")
             elseif data.forceSync.reason == "sync_to_guest" then
-                show_message("synced to " .. force_sync_source_label(data.forceSync))
+                show_message("Synced to " .. force_sync_source_label(data.forceSync))
             else
-                show_message("force synced")
+                show_message("Force synced")
             end
             finish_poll()
             return
@@ -765,9 +783,9 @@ poll_commands = function()
             apply_remote_state(data.host, force)
             if opts.role == "guest" and sync_enabled and not host_found_notified then
                 host_found_notified = true
-                show_message(force and "host found, synced" or "host found")
+                show_message(force and "Host found and synced" or "Host found")
             elseif force then
-                show_message("synced to host")
+                show_message("Synced to host")
             end
         elseif opts.role == "guest" and sync_enabled then
             host_found_notified = false
@@ -794,7 +812,7 @@ local function force_sync(current_time, reason)
     helper_request("POST", "/api/host/force-sync", state, function(result, err)
         force_sync_request_in_flight = false
         if err then
-            show_message("force sync failed")
+            show_message("Force sync failed")
             msg.warn("Force sync failed: " .. err)
             return
         end
@@ -804,7 +822,7 @@ local function force_sync(current_time, reason)
             end
             show_message(result.message)
         else
-            show_message("force sync sent")
+            show_message("Force sync sent")
         end
     end)
 end
@@ -862,17 +880,17 @@ local function show_menu()
                             save_runtime_config(true, function(saved, sync_restored)
                                 if saved then
                                     if sync_restored == false then
-                                        show_message("room set to " .. opts.room .. "; sync remains off")
+                                        show_message("Room set to " .. opts.room .. "; sync remains off")
                                     else
-                                        show_message("room set to " .. opts.room)
+                                        show_message("Room set to " .. opts.room)
                                     end
                                 else
                                     opts.room = previous_room
-                                    show_message("room update failed")
+                                    show_message("Room update failed")
                                 end
                             end)
                         elseif next_room == opts.room then
-                            show_message("room unchanged")
+                            show_message("Room unchanged")
                         end
                     end)
                 elseif id == "name" then
@@ -883,14 +901,14 @@ local function show_menu()
                             opts.display_name = next_name
                             save_runtime_config(false, function(saved)
                                 if saved then
-                                    show_message("name set to " .. opts.display_name)
+                                    show_message("Name set to " .. opts.display_name)
                                 else
                                     opts.display_name = previous_name
-                                    show_message("name update failed")
+                                    show_message("Name update failed")
                                 end
                             end)
                         elseif next_name == opts.display_name then
-                            show_message("name unchanged")
+                            show_message("Name unchanged")
                         end
                     end)
                 end
@@ -933,7 +951,7 @@ local function register_observers()
             mp.set_property_number("time-pos", target)
             applying_remote_seek = false
         end
-        show_message("paused by host")
+        show_message("Paused by host")
     end)
 
     mp.observe_property("time-pos", "number", function(_, current_time)
@@ -974,7 +992,7 @@ local function register_observers()
                 applying_remote_seek = true
                 mp.set_property_number("time-pos", expected_host_time)
                 applying_remote_seek = false
-                show_message("snapped back to host")
+                show_message("Snapped back to host")
             end
         end
 
@@ -1036,7 +1054,7 @@ if sync_on_start then
             if saved then
                 set_sync(true)
             else
-                show_message("sync unavailable: config update failed")
+                show_message("Sync unavailable: config update failed")
             end
         end)
     end

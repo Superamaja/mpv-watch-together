@@ -411,10 +411,10 @@ func (a *App) handlePostConfig(w http.ResponseWriter, r *http.Request) {
 func configChangedMessage(roomChanged bool, nameChanged bool, cfg config.Config) string {
 	changes := make([]string, 0, 2)
 	if roomChanged {
-		changes = append(changes, "room changed to "+cfg.RoomID)
+		changes = append(changes, "Room changed to "+cfg.RoomID)
 	}
 	if nameChanged {
-		changes = append(changes, "name changed to "+cfg.DisplayName)
+		changes = append(changes, "Name changed to "+cfg.DisplayName)
 	}
 	if len(changes) == 0 {
 		return ""
@@ -633,10 +633,10 @@ func (a *App) handlePostForceSync(w http.ResponseWriter, r *http.Request) {
 	}
 	a.mu.RUnlock()
 	eventType := eventForceSync
-	message := fmt.Sprintf("Force sync sent to %d guests", guestCount)
+	message := "Force sync sent to " + guestCountLabel(guestCount)
 	if reason == forceSyncReasonAutoSeek {
 		eventType = eventAutoForceSync
-		message = fmt.Sprintf("Auto sync sent after seek to %d guests", guestCount)
+		message = "Auto sync sent after seek to " + guestCountLabel(guestCount)
 	}
 	event := a.publishRoomEvent(context.Background(), cfg.RoomID, eventType, message, cfg.UserID, "success")
 	response := map[string]any{
@@ -648,6 +648,13 @@ func (a *App) handlePostForceSync(w http.ResponseWriter, r *http.Request) {
 		response["eventId"] = event.EventID
 	}
 	writeJSON(w, http.StatusOK, response)
+}
+
+func guestCountLabel(count int) string {
+	if count == 1 {
+		return "1 guest"
+	}
+	return fmt.Sprintf("%d guests", count)
 }
 
 func (a *App) handlePostSyncToGuest(w http.ResponseWriter, r *http.Request) {

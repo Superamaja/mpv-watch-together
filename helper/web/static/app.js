@@ -362,7 +362,11 @@ function notifyGuestChanges(_previous, next) {
 function notifyRoomEvent(event) {
   if (!event?.eventId || event.eventId === lastRoomEventId) return;
   lastRoomEventId = event.eventId;
-  if (event.type === "guest_synced" || event.type === "guest_left") return;
+  if (
+    event.type === "guest_synced" ||
+    event.type === "guest_left" ||
+    event.type === "guest_pruned"
+  ) return;
   if (event.userId === state.userId && !showsSelfEvent(event.type)) return;
   if (event.message) showToast(event.message);
 }
