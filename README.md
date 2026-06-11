@@ -70,13 +70,14 @@ MPV_WATCH_DEFAULT_GUEST_DISPLAY_NAME=Guest
 
 The build also bakes the bundle role into each helper binary. Release helpers reject `-role`; an unbundled development build still supports `-role host` for local development.
 
-The `MPV_WATCH_DEFAULT_*` values are written into each generated `script-opts/mpv-watch.conf`. That file contains the matching mpv-side role and identity values:
+The room and display-name defaults are written into each generated `script-opts/mpv-watch.conf`:
 
 ```text
-role=host
 room=room123
 display_name=Host
 ```
+
+The Lua client reads the immutable host or guest role from the running helper, so the role is defined in one place and is not duplicated in mpv's configuration.
 
 Build flags override `.env` package defaults:
 
