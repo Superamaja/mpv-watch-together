@@ -268,6 +268,19 @@ function canSyncToGuest(guest) {
   );
 }
 
+const TRACK_ICONS = {
+  audio: `<svg viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg" aria-hidden="true"><path d="M11 5L6 9H3v6h3l5 4z" fill="currentColor" /><path d="M15.5 8.5a5 5 0 010 7" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" /></svg>`,
+  subtitle: `<svg viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg" aria-hidden="true"><rect x="3" y="5" width="18" height="14" rx="2.5" stroke="currentColor" stroke-width="1.6" /><path d="M7 14h4M14 14h3" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" /></svg>`,
+};
+
+function trackChip(kind, label, value) {
+  return `<span class="track-chip">
+    <span class="track-chip-icon" aria-hidden="true">${TRACK_ICONS[kind]}</span>
+    <span class="track-chip-label">${label}</span>
+    <b>${escapeHTML(formatTrackID(value))}</b>
+  </span>`;
+}
+
 function guestRow(userId, guest, host) {
   const stateText = guest.isBuffering ? "Buffering" : guest.isPlaying ? "Playing" : "Paused";
   const stale = isStale(guest);
@@ -275,24 +288,32 @@ function guestRow(userId, guest, host) {
   const canRemove = state.role === "host" && stale;
   const canSync = canSyncToGuest(guest);
   const name = guest.displayName || guest.userId;
+  const actions = `${canSync ? `<button class="guest-action" data-sync-to-guest="${escapeHTML(userId)}" data-tip="Move the whole room to ${escapeHTML(name)}'s current position" data-tip-align="end">
+        <svg viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg" aria-hidden="true"><circle cx="12" cy="12" r="8" stroke="currentColor" stroke-width="1.8" /><circle cx="12" cy="12" r="2.5" fill="currentColor" /></svg>
+        Use Guest Time
+      </button>` : ""}${canRemove ? `<button class="icon-button" data-remove-guest="${escapeHTML(userId)}" data-tip="Remove this offline guest from the room" data-tip-align="end">Remove</button>` : ""}`;
   return `
     <div class="guest ${stale ? "is-stale" : ""}">
-      <div class="guest-main">
-        <div class="avatar ${stale ? "is-offline" : "is-online"}">${escapeHTML(initials(name))}</div>
-        <div class="guest-info">
-          <strong title="${escapeHTML(name)}">${escapeHTML(name)}</strong>
-          <span class="guest-sub">${escapeHTML(stateText)} · ${escapeHTML(formatSeconds(guest.currentTime))} · ${escapeHTML(formatAge(guest.lastSeen))}</span>
+      <div class="guest-head">
+        <div class="guest-main">
+          <div class="avatar ${stale ? "is-offline" : "is-online"}">${escapeHTML(initials(name))}</div>
+          <div class="guest-info">
+            <strong title="${escapeHTML(name)}">${escapeHTML(name)}</strong>
+            <span class="guest-sub">${escapeHTML(stateText)} · ${escapeHTML(formatSeconds(guest.currentTime))} · ${escapeHTML(formatAge(guest.lastSeen))}</span>
+          </div>
+        </div>
+        <div class="guest-tags">
+          <div class="pill ${stale ? "offline" : "online"}">${stale ? "offline" : "online"}</div>
+          ${guest.isBuffering ? `<div class="pill buffering">buffering</div>` : ""}
+          ${drift ? `<div class="pill ${drift.level}">${escapeHTML(drift.label)}</div>` : ""}
         </div>
       </div>
-      <div class="guest-pills">
-        <div class="pill ${stale ? "offline" : "online"}">${stale ? "offline" : "online"}</div>
-        ${guest.isBuffering ? `<div class="pill buffering">buffering</div>` : ""}
-        ${drift ? `<div class="pill ${drift.level}">${escapeHTML(drift.label)}</div>` : ""}
-        ${canSync ? `<button class="guest-action" data-sync-to-guest="${escapeHTML(userId)}" data-tip="Move the whole room to ${escapeHTML(name)}'s current position" data-tip-align="end">
-          <svg viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg" aria-hidden="true"><circle cx="12" cy="12" r="8" stroke="currentColor" stroke-width="1.8" /><circle cx="12" cy="12" r="2.5" fill="currentColor" /></svg>
-          Use Guest Time
-        </button>` : ""}
-        ${canRemove ? `<button class="icon-button" data-remove-guest="${escapeHTML(userId)}" data-tip="Remove this offline guest from the room" data-tip-align="end">Remove</button>` : ""}
+      <div class="guest-foot">
+        <div class="guest-tracks">
+          ${trackChip("audio", "Audio", guest.aid)}
+          ${trackChip("subtitle", "Subs", guest.sid)}
+        </div>
+        ${actions ? `<div class="guest-actions">${actions}</div>` : ""}
       </div>
     </div>
   `;

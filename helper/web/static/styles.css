@@ -606,8 +606,7 @@ input[type="checkbox"] {
 
 .guest {
   display: flex;
-  align-items: center;
-  justify-content: space-between;
+  flex-direction: column;
   gap: 12px;
   border: 1px solid var(--border);
   border-radius: var(--radius-md);
@@ -618,6 +617,13 @@ input[type="checkbox"] {
 
 .guest:hover {
   border-color: var(--border-strong);
+}
+
+.guest-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
 }
 
 .guest.is-stale {
@@ -683,12 +689,75 @@ input[type="checkbox"] {
   margin-top: 2px;
 }
 
-.guest-pills {
+.guest-tags {
   display: flex;
   align-items: center;
   justify-content: flex-end;
   gap: 6px;
   flex-wrap: wrap;
+  flex: 0 0 auto;
+}
+
+/* Footer: track info on the left, actions on the right, divided from the
+   identity row above so status tags and action buttons never share a line. */
+.guest-foot {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  flex-wrap: wrap;
+  padding-top: 12px;
+  border-top: 1px solid var(--border);
+}
+
+.guest-tracks {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  min-width: 0;
+}
+
+.track-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 9px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--surface-raised);
+  font-size: 11px;
+  color: var(--text-muted);
+}
+
+.track-chip-icon {
+  display: grid;
+  place-items: center;
+  color: var(--text-faint);
+}
+
+.track-chip-icon svg {
+  width: 13px;
+  height: 13px;
+}
+
+.track-chip-label {
+  color: var(--text-faint);
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.track-chip b {
+  color: var(--text);
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+}
+
+.guest-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
   flex: 0 0 auto;
 }
 
@@ -729,12 +798,17 @@ input[type="checkbox"] {
   border-radius: var(--radius-md);
 }
 
+/* Action buttons live in the footer and are deliberately rectangular so they
+   read as controls, not as the pill-shaped status tags above them. */
 .icon-button {
+  display: inline-flex;
+  align-items: center;
+  min-height: 32px;
   border: 1px solid rgba(251, 113, 133, 0.32);
-  border-radius: 999px;
-  padding: 4px 11px;
+  border-radius: var(--radius-sm);
+  padding: 0 12px;
   font: inherit;
-  font-size: 11px;
+  font-size: 12px;
   font-weight: 600;
   cursor: pointer;
   background: var(--danger-soft);
@@ -750,27 +824,33 @@ input[type="checkbox"] {
 .guest-action {
   display: inline-flex;
   align-items: center;
-  gap: 5px;
-  border: 1px solid rgba(52, 211, 153, 0.32);
-  border-radius: 999px;
-  padding: 4px 11px;
+  gap: 6px;
+  min-height: 32px;
+  padding: 0 13px;
+  border: 1px solid rgba(52, 211, 153, 0.5);
+  border-radius: var(--radius-sm);
   font: inherit;
-  font-size: 11px;
+  font-size: 12px;
   font-weight: 600;
   cursor: pointer;
-  background: var(--accent-soft);
-  color: var(--accent);
-  transition: background 0.16s ease, border-color 0.16s ease;
+  background: linear-gradient(180deg, var(--accent), var(--accent-strong));
+  color: #06281d;
+  box-shadow: 0 8px 20px -14px rgba(16, 185, 129, 0.9);
+  transition: background 0.16s ease, border-color 0.16s ease, transform 0.05s ease;
 }
 
 .guest-action svg {
-  width: 13px;
-  height: 13px;
+  width: 14px;
+  height: 14px;
 }
 
 .guest-action:hover {
-  background: rgba(52, 211, 153, 0.24);
-  border-color: rgba(52, 211, 153, 0.5);
+  background: linear-gradient(180deg, #4ade9f, #14c08c);
+  border-color: rgba(52, 211, 153, 0.75);
+}
+
+.guest-action:active {
+  transform: translateY(1px);
 }
 
 /* ---------- Collapsible drawers ---------- */
