@@ -29,7 +29,6 @@ local ROOM_SETTING_LIMITS = {
 
 local opts = {
     helper_url = "http://127.0.0.1:8765",
-    role = "guest",
     room = "",
     display_name = "mpv watcher",
     sync_on_start = "no",
@@ -70,7 +69,10 @@ local helper_connected = nil  -- nil=never tried, true=ok, false=was ok then los
 local active_poll_until = 0
 local reconnect_poll_interval = nil
 local reconnect_poll_failures = 0
+local runtime_role = nil
 local runtime_ready = false
+local role_request_in_flight = false
+local role_request_callbacks = {}
 local observers_registered = false
 local heartbeat_timer = nil
 local command_timer = nil
@@ -89,6 +91,7 @@ local shutdown_cleanup = nil
 local send_state = nil
 local ensure_runtime_ready = nil
 local schedule_command_poll = nil
+local prepare_runtime = nil
 
 local function heartbeat_interval()
     return tonumber(opts.heartbeat_interval) or 5.0
@@ -214,12 +217,12 @@ local function should_show_event(event, user_id)
         return false
     end
     if event.type == "force_sync" or event.type == "auto_force_sync" then
-        return opts.role == "host"
+        return runtime_role == "host"
     end
     if event.type == "sync_to_guest" then
         return false
     end
-    if event.type == "guest_buffering" and opts.role == "host" then
+    if event.type == "guest_buffering" and runtime_role == "host" then
         return false
     end
     if event.type == "config_changed" then
@@ -332,6 +335,45 @@ local function helper_request(method, path, body, callback)
     end)
 end
 
+local function finish_role_request(ok, err)
+    local callbacks = role_request_callbacks
+    role_request_callbacks = {}
+    role_request_in_flight = false
+    for _, callback in ipairs(callbacks) do
+        callback(ok, err)
+    end
+end
+
+local function load_runtime_role(callback)
+    if runtime_role then
+        callback(true)
+        return
+    end
+
+    role_request_callbacks[#role_request_callbacks + 1] = callback
+    if role_request_in_flight then
+        return
+    end
+
+    role_request_in_flight = true
+    helper_request("GET", "/api/config", nil, function(result, err)
+        if err then
+            finish_role_request(false, err)
+            return
+        end
+
+        local role = trim(result and result.role):lower()
+        if role ~= "host" and role ~= "guest" then
+            finish_role_request(false, "helper returned an invalid role")
+            return
+        end
+
+        runtime_role = role
+        msg.debug("Loaded helper role: " .. runtime_role)
+        finish_role_request(true)
+    end)
+end
+
 local function helper_request_sync(method, path, body, max_time)
     local result = mp.command_native(helper_command(method, path, body, max_time))
     return parse_helper_result(result)
@@ -392,7 +434,7 @@ set_sync = function(enabled, callback, quiet)
         sync_enabled = enabled
         if enabled then
             mark_active_polling(8.0)
-            if opts.role == "guest" then
+            if runtime_role == "guest" then
                 force_next_host_apply = true
                 host_found_notified = false
             end
@@ -434,7 +476,7 @@ local function save_runtime_config(changed_room, callback)
             if changed_room then
                 last_host_state = nil
                 host_found_notified = false
-                force_next_host_apply = opts.role == "guest"
+                force_next_host_apply = runtime_role == "guest"
                 if was_synced and saved then
                     set_sync(true, function(restored)
                         if callback then callback(true, restored) end
@@ -552,11 +594,11 @@ local function apply_remote_state(state, force)
     if not sync_enabled or not state then
         return
     end
-    if opts.role == "host" and not state.applyToHost then
+    if runtime_role == "host" and not state.applyToHost then
         return
     end
 
-    if opts.role ~= "host" and type(state.currentTime) == "number" then
+    if runtime_role ~= "host" and type(state.currentTime) == "number" then
         last_host_state = state
     end
 
@@ -610,7 +652,7 @@ local function display_track_id(value)
 end
 
 local function apply_track_sync(track_sync)
-    if not sync_enabled or opts.role == "host" or not track_sync then
+    if not sync_enabled or runtime_role == "host" or not track_sync then
         return
     end
 
@@ -733,7 +775,7 @@ poll_commands = function()
         end
         if data.hostCommand and data.hostCommand.commandId and data.hostCommand.commandId ~= last_host_command_id then
             last_host_command_id = data.hostCommand.commandId
-            if opts.role == "host" and data.hostCommand.type == "pause_for_guest_buffering" then
+            if runtime_role == "host" and data.hostCommand.type == "pause_for_guest_buffering" then
                 mp.set_property_bool("pause", true)
                 show_message(data.hostCommand.message or "Paused because a guest is buffering")
             end
@@ -746,7 +788,7 @@ poll_commands = function()
                 poll_request_in_flight = false
                 if was_sync_enabled then
                     host_found_notified = false
-                    if opts.role == "guest" then
+                    if runtime_role == "guest" then
                         show_message("Sync disabled: no host found in room")
                     else
                         show_message("Sync disabled by helper")
@@ -781,13 +823,13 @@ poll_commands = function()
                 mark_active_polling(8.0)
             end
             apply_remote_state(data.host, force)
-            if opts.role == "guest" and sync_enabled and not host_found_notified then
+            if runtime_role == "guest" and sync_enabled and not host_found_notified then
                 host_found_notified = true
                 show_message(force and "Host found and synced" or "Host found")
             elseif force then
                 show_message("Synced to host")
             end
-        elseif opts.role == "guest" and sync_enabled then
+        elseif runtime_role == "guest" and sync_enabled then
             host_found_notified = false
         end
         finish_poll()
@@ -935,7 +977,7 @@ local function register_observers()
 
     mp.observe_property("pause", "bool", function(_, paused)
         queue_state_update()
-        if paused or not sync_enabled or opts.role ~= "guest" or applying_remote_pause then
+        if paused or not sync_enabled or runtime_role ~= "guest" or applying_remote_pause then
             return
         end
         -- Guest manually unpaused while host is paused - re-pause and snap back.
@@ -975,7 +1017,7 @@ local function register_observers()
             end
         end
 
-        if opts.role == "host" and sync_enabled and opts.auto_force_sync_on_seek == "yes" and last_time_pos and last_time_wall then
+        if runtime_role == "host" and sync_enabled and opts.auto_force_sync_on_seek == "yes" and last_time_pos and last_time_wall then
             local elapsed = math.max(0, now - last_time_wall)
             local expected_time = last_time_pos + elapsed
             local drift = math.abs(current_time - expected_time)
@@ -985,7 +1027,7 @@ local function register_observers()
                 last_auto_force_sync_at = now
                 force_sync(current_time, "auto_seek")
             end
-        elseif opts.role == "guest" and sync_enabled and opts.seek_lock == "yes" and last_host_state then
+        elseif runtime_role == "guest" and sync_enabled and opts.seek_lock == "yes" and last_host_state then
             local expected_host_time = projected_time(last_host_state)
             local threshold = room_number_option("seek_lock_threshold")
             if expected_host_time and math.abs(current_time - expected_host_time) >= threshold then
@@ -1019,12 +1061,24 @@ local function register_observers()
 end
 
 ensure_runtime_ready = function()
-    if runtime_ready then
-        return true
+    return runtime_ready and runtime_role ~= nil
+end
+
+prepare_runtime = function(callback)
+    if ensure_runtime_ready() then
+        callback(true)
+        return
     end
-    register_observers()
-    runtime_ready = true
-    return true
+
+    load_runtime_role(function(loaded, err)
+        if not loaded then
+            callback(false, err)
+            return
+        end
+        register_observers()
+        runtime_ready = true
+        callback(true)
+    end)
 end
 
 -- Lazily push config on the first menu open so startup stays near zero-cost when
@@ -1033,14 +1087,18 @@ end
 local config_pushed = false
 
 mp.add_key_binding("Ctrl+w", "mpv-watch-menu", function()
-    if not ensure_runtime_ready() then
-        return
-    end
-    if not config_pushed and not sync_enabled then
-        config_pushed = true
-        post_config()
-    end
-    show_menu()
+    prepare_runtime(function(ready, err)
+        if not ready then
+            show_message("Helper unavailable: start it and try again")
+            msg.warn("Failed to load helper role: " .. tostring(err))
+            return
+        end
+        if not config_pushed and not sync_enabled then
+            config_pushed = true
+            post_config()
+        end
+        show_menu()
+    end)
 end)
 
 mp.register_event("shutdown", function()
@@ -1048,14 +1106,19 @@ mp.register_event("shutdown", function()
 end)
 
 if sync_on_start then
-    if ensure_runtime_ready() then
-        config_pushed = true
-        post_config(function(saved)
-            if saved then
-                set_sync(true)
-            else
-                show_message("Sync unavailable: config update failed")
-            end
-        end)
-    end
+    prepare_runtime(function(ready, err)
+        if ready then
+            config_pushed = true
+            post_config(function(saved)
+                if saved then
+                    set_sync(true)
+                else
+                    show_message("Sync unavailable: config update failed")
+                end
+            end)
+        else
+            show_message("Sync unavailable: helper unreachable")
+            msg.warn("Failed to load helper role: " .. tostring(err))
+        end
+    end)
 end

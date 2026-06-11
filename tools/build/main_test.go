@@ -102,14 +102,13 @@ func TestMacQuickstartUsesGeneratedScripts(t *testing.T) {
 	}
 }
 
-func TestConfigTemplateUsesBundleValues(t *testing.T) {
+func TestConfigTemplateUsesIdentityValues(t *testing.T) {
 	data := newBundleTemplateData(roleGuest, target{OS: "windows", Arch: "amd64"}, "Guest", "movie-night", "mpv-watch-helper.exe")
 	doc, err := renderTemplate("mpv-watch.conf.tmpl", data)
 	if err != nil {
 		t.Fatal(err)
 	}
 	for _, want := range []string{
-		"role=guest",
 		"room=movie-night",
 		"display_name=Guest",
 	} {
@@ -127,6 +126,7 @@ func TestConfigTemplateOmitsRoomSettingDefaults(t *testing.T) {
 	}
 
 	for _, forbidden := range []string{
+		"role=",
 		"helper_url=",
 		"command_interval=",
 		"adaptive_polling=",
