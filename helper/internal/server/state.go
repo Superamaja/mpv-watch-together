@@ -68,6 +68,7 @@ func (a *App) handleGetMPVCommands(w http.ResponseWriter, r *http.Request) {
 		Host:        a.room.Host,
 		ForceSync:   a.room.ForceSync,
 		TrackSync:   a.room.TrackSync,
+		HostCommand: a.room.HostCommand,
 		LatestEvent: a.room.Events.Latest,
 		Settings:    &settings,
 		ServerNow:   a.serverNowLocked(),

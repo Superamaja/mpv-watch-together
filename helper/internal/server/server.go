@@ -39,8 +39,9 @@ const (
 	eventSyncToGuest    = "sync_to_guest"
 	eventTracksSynced   = "tracks_synced"
 
-	forceSyncReasonAutoSeek = "auto_seek"
-	forceSyncReasonToGuest  = "sync_to_guest"
+	forceSyncReasonAutoSeek   = "auto_seek"
+	forceSyncReasonToGuest    = "sync_to_guest"
+	hostCommandPauseBuffering = "pause_for_guest_buffering"
 )
 
 type App struct {
@@ -264,7 +265,7 @@ func (a *App) runCoordinatorTick() {
 	}
 
 	pruneIDs := make([]string, 0)
-	events := make([]protocol.RoomEvent, 0)
+	newBufferingGuests := make([]protocol.ParticipantState, 0)
 	for guestID, guest := range room.Guests {
 		ageMs := now - guest.LastSeen
 		if guest.LastSeen > 0 && ageMs > guestPruneAfter.Milliseconds() {
@@ -281,12 +282,7 @@ func (a *App) runCoordinatorTick() {
 
 		if _, ok := a.guestBufferingSince[guestID]; !ok {
 			a.guestBufferingSince[guestID] = now
-			events = append(events, protocol.RoomEvent{
-				Type:    eventGuestBuffering,
-				Message: guest.DisplayName + " is buffering; host paused",
-				UserID:  guestID,
-				Level:   "warning",
-			})
+			newBufferingGuests = append(newBufferingGuests, guest)
 		}
 	}
 	a.mu.Unlock()
@@ -309,9 +305,54 @@ func (a *App) runCoordinatorTick() {
 		a.publishRoomEvent(a.appCtx, cfg.RoomID, eventGuestPruned, "Removed offline guest", guestID, "info")
 	}
 
-	for _, event := range events {
-		a.publishRoomEvent(a.appCtx, cfg.RoomID, event.Type, event.Message, event.UserID, event.Level)
+	if len(newBufferingGuests) > 0 {
+		a.issueGuestBufferingPause(a.appCtx, cfg.RoomID, newBufferingGuests, now)
 	}
+}
+
+func (a *App) issueGuestBufferingPause(ctx context.Context, roomID string, guests []protocol.ParticipantState, now int64) {
+	message := guestBufferingPauseMessage(guests)
+	sourceUserID := ""
+	if len(guests) > 0 {
+		sourceUserID = guests[0].UserID
+	}
+	command := protocol.HostCommand{
+		CommandID:    fmt.Sprintf("pause_buffering_%d_%06d", now, rand.Intn(1000000)),
+		Type:         hostCommandPauseBuffering,
+		Message:      message,
+		SourceUserID: sourceUserID,
+		IssuedAt:     now,
+	}
+	event := a.newRoomEvent(eventGuestBuffering, message, sourceUserID, "warning")
+
+	reqCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
+	defer cancel()
+	if err := a.firebase.Patch(reqCtx, roomPath(roomID), map[string]any{
+		"events": map[string]any{
+			"latest": event,
+		},
+		"hostCommand": command,
+		"updatedAt":   now,
+	}, nil); err != nil {
+		slog.Warn("failed to issue guest buffering pause", "room", roomID, "error", err)
+		return
+	}
+
+	a.mu.Lock()
+	if a.cfg.RoomID == roomID {
+		a.room.HostCommand = &command
+		a.room.Events.Latest = &event
+		a.room.UpdatedAt = now
+	}
+	a.mu.Unlock()
+	a.publishState()
+}
+
+func guestBufferingPauseMessage(guests []protocol.ParticipantState) string {
+	if len(guests) == 1 {
+		return "Paused because " + displayNameOrID(guests[0].DisplayName, guests[0].UserID) + " is buffering"
+	}
+	return fmt.Sprintf("Paused because %d guests are buffering", len(guests))
 }
 
 func (a *App) handlePostConfig(w http.ResponseWriter, r *http.Request) {
@@ -1101,11 +1142,12 @@ func (a *App) removeHostParticipant(ctx context.Context, cfg config.Config, now 
 		slog.Warn("failed to remove host participant", "room", cfg.RoomID, "user", cfg.UserID, "error", err)
 	}
 	if err := a.firebase.Patch(reqCtx, roomPath(cfg.RoomID), map[string]any{
-		"events":    nil,
-		"forceSync": nil,
-		"status":    "inactive",
-		"trackSync": nil,
-		"updatedAt": now,
+		"events":      nil,
+		"forceSync":   nil,
+		"hostCommand": nil,
+		"status":      "inactive",
+		"trackSync":   nil,
+		"updatedAt":   now,
 	}, nil); err != nil {
 		slog.Warn("failed to mark room inactive", "room", cfg.RoomID, "error", err)
 	}
@@ -1115,10 +1157,11 @@ func (a *App) clearTransientRoomState(ctx context.Context, roomID string, now in
 	reqCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
 	defer cancel()
 	if err := a.firebase.Patch(reqCtx, roomPath(roomID), map[string]any{
-		"events":    nil,
-		"forceSync": nil,
-		"trackSync": nil,
-		"updatedAt": now,
+		"events":      nil,
+		"forceSync":   nil,
+		"hostCommand": nil,
+		"trackSync":   nil,
+		"updatedAt":   now,
 	}, nil); err != nil {
 		return fmt.Errorf("clear previous room session: %w", err)
 	}
@@ -1127,6 +1170,7 @@ func (a *App) clearTransientRoomState(ctx context.Context, roomID string, now in
 	if a.cfg.RoomID == roomID {
 		a.room.Events = protocol.RoomEvents{}
 		a.room.ForceSync = nil
+		a.room.HostCommand = nil
 		a.room.TrackSync = nil
 		a.room.UpdatedAt = now
 	}

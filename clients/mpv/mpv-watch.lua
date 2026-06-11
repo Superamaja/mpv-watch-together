@@ -52,6 +52,7 @@ options.read_options(opts, "mpv-watch")
 local sync_enabled = opts.sync_on_start == "yes"
 local last_force_sync_id = nil
 local last_track_sync_id = nil
+local last_host_command_id = nil
 local last_event_id = nil
 local last_server_now = nil
 local last_server_wall = nil
@@ -205,6 +206,9 @@ local function should_show_event(event, user_id)
         return opts.role == "host"
     end
     if event.type == "sync_to_guest" then
+        return false
+    end
+    if event.type == "guest_buffering" and opts.role == "host" then
         return false
     end
     if event.type == "config_changed" then
@@ -592,8 +596,12 @@ poll_commands = function()
         if should_show_event(data.latestEvent, data.userId) then
             show_message(data.latestEvent.message)
         end
-        if opts.role == "host" and data.latestEvent.type == "guest_buffering" then
+    end
+    if data.hostCommand and data.hostCommand.commandId and data.hostCommand.commandId ~= last_host_command_id then
+        last_host_command_id = data.hostCommand.commandId
+        if opts.role == "host" and data.hostCommand.type == "pause_for_guest_buffering" then
             mp.set_property_bool("pause", true)
+            show_message(data.hostCommand.message or "Paused because a guest is buffering")
         end
     end
     if data.syncEnabled ~= nil then

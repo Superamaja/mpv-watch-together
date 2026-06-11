@@ -45,6 +45,14 @@ type TrackSync struct {
 	SubtitleID string `json:"sid,omitempty"`
 }
 
+type HostCommand struct {
+	CommandID    string `json:"commandId"`
+	Type         string `json:"type"`
+	Message      string `json:"message"`
+	SourceUserID string `json:"sourceUserId,omitempty"`
+	IssuedAt     int64  `json:"issuedAt"`
+}
+
 type Permissions struct {
 	ControllerID string `json:"controllerId"`
 }
@@ -91,6 +99,7 @@ type Room struct {
 	Permissions Permissions                 `json:"permissions"`
 	ForceSync   *ForceSync                  `json:"forceSync,omitempty"`
 	TrackSync   *TrackSync                  `json:"trackSync,omitempty"`
+	HostCommand *HostCommand                `json:"hostCommand,omitempty"`
 	Events      RoomEvents                  `json:"events,omitempty"`
 	Settings    *RoomSettings               `json:"settings,omitempty"`
 	Status      string                      `json:"status"`
@@ -105,6 +114,7 @@ type CommandSnapshot struct {
 	Host        *ParticipantState `json:"host,omitempty"`
 	ForceSync   *ForceSync        `json:"forceSync,omitempty"`
 	TrackSync   *TrackSync        `json:"trackSync,omitempty"`
+	HostCommand *HostCommand      `json:"hostCommand,omitempty"`
 	LatestEvent *RoomEvent        `json:"latestEvent,omitempty"`
 	Settings    *RoomSettings     `json:"settings,omitempty"`
 	ServerNow   int64             `json:"serverNow"`

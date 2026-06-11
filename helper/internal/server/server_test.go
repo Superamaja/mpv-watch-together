@@ -244,6 +244,63 @@ func TestCoordinatorTickDisablesHostSyncWhenMPVStopsReporting(t *testing.T) {
 	}
 }
 
+func TestCoordinatorTickIssuesDurableGuestBufferingPause(t *testing.T) {
+	fb, recorder := newRecordingFirebase(t)
+	now := protocol.NowMillis()
+	app := &App{
+		cfg: config.Config{
+			Role:   protocol.RoleHost,
+			RoomID: "room123",
+			UserID: "host",
+		},
+		firebase:    fb,
+		syncEnabled: true,
+		lastLocal: protocol.ParticipantState{
+			LastSeen: now,
+		},
+		room: protocol.Room{
+			Guests: map[string]protocol.ParticipantState{
+				"guest": {
+					UserID:      "guest",
+					DisplayName: "Friend",
+					IsBuffering: true,
+					LastSeen:    now,
+				},
+			},
+		},
+		appCtx:              context.Background(),
+		subscribers:         map[chan []byte]struct{}{},
+		guestBufferingSince: map[string]int64{},
+	}
+
+	app.runCoordinatorTick()
+
+	if app.room.HostCommand == nil {
+		t.Fatal("host command was not stored locally")
+	}
+	if app.room.HostCommand.Type != hostCommandPauseBuffering {
+		t.Fatalf("host command type = %q, want %q", app.room.HostCommand.Type, hostCommandPauseBuffering)
+	}
+	if app.room.HostCommand.Message != "Paused because Friend is buffering" {
+		t.Fatalf("host command message = %q", app.room.HostCommand.Message)
+	}
+
+	request, ok := recorder.find(http.MethodPatch, "/rooms/room123.json")
+	if !ok {
+		t.Fatalf("durable host command patch missing; requests = %+v", recorder.snapshot())
+	}
+	var patch map[string]json.RawMessage
+	if err := json.Unmarshal(request.Body, &patch); err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := patch["hostCommand"]; !ok {
+		t.Fatalf("patch is missing hostCommand: %s", request.Body)
+	}
+	if _, ok := patch["events"]; !ok {
+		t.Fatalf("patch is missing matching room event: %s", request.Body)
+	}
+}
+
 func TestPostSyncSeedsHostPresenceGrace(t *testing.T) {
 	fb, recorder := newRecordingFirebase(t)
 	app := &App{
