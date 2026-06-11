@@ -275,6 +275,35 @@ func TestPostSyncSeedsHostPresenceGrace(t *testing.T) {
 	}
 }
 
+func TestPostConfigPreservesBundleRole(t *testing.T) {
+	app := &App{
+		cfg: config.Config{
+			Role:        protocol.RoleGuest,
+			RoomID:      "new-room",
+			DisplayName: "Guest",
+		},
+		subscribers: map[chan []byte]struct{}{},
+	}
+
+	w := httptest.NewRecorder()
+	r := httptest.NewRequest(http.MethodPost, "/api/config", strings.NewReader(`{
+		"role":"host",
+		"roomId":"new-room",
+		"displayName":"Friend"
+	}`))
+	app.handlePostConfig(w, r)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("status = %d, want %d", w.Code, http.StatusOK)
+	}
+	if app.cfg.Role != protocol.RoleGuest {
+		t.Fatalf("role = %q, want immutable bundle role %q", app.cfg.Role, protocol.RoleGuest)
+	}
+	if app.cfg.RoomID != "new-room" || app.cfg.DisplayName != "Friend" {
+		t.Fatalf("config = %+v, want preserved room and updated display name", app.cfg)
+	}
+}
+
 func streamEvent(t *testing.T, eventName string, path string, data any) firebase.StreamEvent {
 	t.Helper()
 	payload, err := json.Marshal(map[string]any{

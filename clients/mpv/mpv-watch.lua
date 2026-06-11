@@ -276,7 +276,6 @@ end
 
 local function post_config()
     local result, err = helper_request("POST", "/api/config", {
-        role = opts.role,
         roomId = opts.room,
         displayName = opts.display_name,
     })

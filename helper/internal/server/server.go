@@ -316,16 +316,10 @@ func (a *App) runCoordinatorTick() {
 
 func (a *App) handlePostConfig(w http.ResponseWriter, r *http.Request) {
 	var req struct {
-		Role        string `json:"role"`
 		RoomID      string `json:"roomId"`
 		DisplayName string `json:"displayName"`
 	}
 	if !decodeJSON(w, r, &req) {
-		return
-	}
-	req.Role = strings.ToLower(strings.TrimSpace(req.Role))
-	if req.Role != protocol.RoleHost && req.Role != protocol.RoleGuest {
-		writeJSON(w, http.StatusBadRequest, apiError{Error: "role must be host or guest"})
 		return
 	}
 	if strings.TrimSpace(req.RoomID) == "" {
@@ -335,7 +329,6 @@ func (a *App) handlePostConfig(w http.ResponseWriter, r *http.Request) {
 
 	a.mu.Lock()
 	previousCfg := a.cfg
-	a.cfg.Role = req.Role
 	a.cfg.RoomID = strings.TrimSpace(req.RoomID)
 	if strings.TrimSpace(req.DisplayName) != "" {
 		a.cfg.DisplayName = strings.TrimSpace(req.DisplayName)
