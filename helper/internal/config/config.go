@@ -24,7 +24,7 @@ type Config struct {
 	FirebaseDatabaseURL string
 }
 
-func Load(args []string, builtinFirebaseURL string) (Config, error) {
+func Load(args []string, builtinFirebaseURL string, builtinRole string) (Config, error) {
 	_ = loadDotEnv(".env")
 
 	fbURL := os.Getenv("FIREBASE_DATABASE_URL")
@@ -32,9 +32,15 @@ func Load(args []string, builtinFirebaseURL string) (Config, error) {
 		fbURL = builtinFirebaseURL
 	}
 
+	role := strings.ToLower(strings.TrimSpace(builtinRole))
+	roleIsFixed := role != ""
+	if !roleIsFixed {
+		role = envOrDefault("MPV_WATCH_ROLE", protocol.RoleGuest)
+	}
+
 	cfg := Config{
 		Addr:                envOrDefault("MPV_WATCH_ADDR", DefaultAddr),
-		Role:                envOrDefault("MPV_WATCH_ROLE", protocol.RoleGuest),
+		Role:                role,
 		RoomID:              os.Getenv("MPV_WATCH_ROOM"),
 		DisplayName:         envOrDefault("MPV_WATCH_DISPLAY_NAME", DefaultDisplayName),
 		UserID:              envOrDefault("MPV_WATCH_USER_ID", randomishID()),
@@ -43,7 +49,9 @@ func Load(args []string, builtinFirebaseURL string) (Config, error) {
 
 	fs := flag.NewFlagSet("mpv-watch-helper", flag.ContinueOnError)
 	fs.StringVar(&cfg.Addr, "addr", cfg.Addr, "local HTTP listen address")
-	fs.StringVar(&cfg.Role, "role", cfg.Role, "client role: host or guest")
+	if !roleIsFixed {
+		fs.StringVar(&cfg.Role, "role", cfg.Role, "client role for development builds: host or guest")
+	}
 	fs.StringVar(&cfg.RoomID, "room", cfg.RoomID, "watch room ID")
 	fs.StringVar(&cfg.DisplayName, "name", cfg.DisplayName, "display name")
 	fs.StringVar(&cfg.UserID, "user-id", cfg.UserID, "stable local user ID")

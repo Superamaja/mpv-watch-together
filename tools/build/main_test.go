@@ -39,6 +39,18 @@ func TestDefaultTargetsUseFastTestingMatrix(t *testing.T) {
 	}
 }
 
+func TestHelperLDFlagsBakeBundleRole(t *testing.T) {
+	flags := helperLDFlags(roleHost, "https://example.firebaseio.com")
+	for _, want := range []string{
+		"main.builtinFirebaseURL=https://example.firebaseio.com",
+		"main.builtinRole=host",
+	} {
+		if !strings.Contains(flags, want) {
+			t.Fatalf("linker flags %q are missing %q", flags, want)
+		}
+	}
+}
+
 func TestMacScriptsInstallAndRunFromBundle(t *testing.T) {
 	data := newBundleTemplateData(roleGuest, target{OS: "darwin", Arch: "arm64"}, "Guest", "room123", "mpv-watch-helper")
 

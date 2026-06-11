@@ -103,11 +103,11 @@ func main() {
 	}
 
 	for _, target := range targets {
-		binaryPath, err := buildHelper(outDir, target, firebaseURL)
-		if err != nil {
-			fatal(err)
-		}
 		for _, role := range rolesForTarget(target) {
+			binaryPath, err := buildHelper(target, role, firebaseURL)
+			if err != nil {
+				fatal(err)
+			}
 			displayName := hostName
 			if role == roleGuest {
 				displayName = guestName
@@ -127,8 +127,8 @@ func main() {
 	fmt.Printf("Release bundles written to %s\n", outDir)
 }
 
-func buildHelper(outDir string, target target, firebaseURL string) (string, error) {
-	buildDir := filepath.Join(".gocache", "release-build", target.OS+"-"+target.Arch)
+func buildHelper(target target, role string, firebaseURL string) (string, error) {
+	buildDir := filepath.Join(".gocache", "release-build", target.OS+"-"+target.Arch+"-"+role)
 	if err := os.MkdirAll(buildDir, 0o755); err != nil {
 		return "", err
 	}
@@ -139,7 +139,7 @@ func buildHelper(outDir string, target target, firebaseURL string) (string, erro
 	}
 	binaryPath := filepath.Join(buildDir, binaryName)
 
-	ldflags := fmt.Sprintf("-X 'main.builtinFirebaseURL=%s'", firebaseURL)
+	ldflags := helperLDFlags(role, firebaseURL)
 	cmd := exec.Command("go", "build", "-trimpath", "-ldflags", ldflags, "-o", binaryPath, "./helper/cmd/mpv-watch-helper")
 	cmd.Env = append(os.Environ(), "GOOS="+target.OS, "GOARCH="+target.Arch)
 	if os.Getenv("GOCACHE") == "" {
@@ -151,6 +151,10 @@ func buildHelper(outDir string, target target, firebaseURL string) (string, erro
 		return "", fmt.Errorf("build %s-%s: %w", target.OS, target.Arch, err)
 	}
 	return binaryPath, nil
+}
+
+func helperLDFlags(role string, firebaseURL string) string {
+	return fmt.Sprintf("-X 'main.builtinFirebaseURL=%s' -X 'main.builtinRole=%s'", firebaseURL, role)
 }
 
 func writeBundle(outDir string, target target, role string, displayName string, room string, binaryPath string) (string, error) {

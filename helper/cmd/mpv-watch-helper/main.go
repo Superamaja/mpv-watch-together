@@ -19,9 +19,10 @@ import (
 // FIREBASE_DATABASE_URL is not set in the environment, so distributed bundles
 // need no .env file.
 var builtinFirebaseURL string
+var builtinRole string
 
 func main() {
-	cfg, err := config.Load(os.Args[1:], builtinFirebaseURL)
+	cfg, err := config.Load(os.Args[1:], builtinFirebaseURL, builtinRole)
 	if err != nil {
 		log.Fatal(err)
 	}

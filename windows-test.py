@@ -180,7 +180,7 @@ def main() -> None:
     print("[start] guest helper →", GUEST_ADDR)
     start_helper(
         GUEST_BUNDLE,
-        ["-role", "guest", "-room", ROOM, "-name", "Guest", "-addr", GUEST_ADDR],
+        ["-room", ROOM, "-name", "Guest", "-addr", GUEST_ADDR],
     )
 
     print("        waiting 1 s for helpers to bind…")
